@@ -1,0 +1,6 @@
+.godot/
+运行数据/
+存档/
+*.exe
+*.pck
+__pycache__/
