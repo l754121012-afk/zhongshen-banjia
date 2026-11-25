@@ -95,7 +95,7 @@ func refresh(g)->void:
 	move_button.text="H　去船坞看伊娅" if g.hearth_moved else "H　接伊娅的搬炉委托"
 	status.text="灶台已迁入潮汐船坞。\n伊娅会给下一班出车备好面包。" if g.hearth_moved else "把老灶送进潮汐船坞。\n到岸时还留有 55 点炉火，即可开炉。"
 	var labels:=["刚出炉一篮面包，选一个地方送去。","东岸码头装车　·　沿途拾月桂叶，客舍另付 2 枚。","一篮已订　·　双灯窑，接夜渡时随船装载。","面包已上车　·　沿公路送往月桂客舍。"]
-	orders.text=labels[g.freight_route] if g.bread_waiting else ("正在发面　·　完成一张运输委托即可出炉。" if g.hearth_moved else "等待面包房搬迁。")
+	orders.text=labels[g.freight_route] if g.bread_waiting else ("正在发面　·　完成一张运输委托即可出炉。" if g.hearth_moved else "伊娅的炉子还在西湾。把炉子运来，码头才有面包可送。")
 	var extra:=2 if g.market_open else 0
 	route_buttons[0].text="1　月桂客舍　公路 +%d"%(6+extra+(3 if g.table_inn else 0))
 	route_buttons[1].text="2　双灯窑　夜渡 +%d"%g.kiln_fare()
@@ -107,4 +107,5 @@ func refresh(g)->void:
 	var eligible:bool=g.hearth_moved and g.inn_runs+g.bread_shipments>0
 	market.disabled=g.market_open or not eligible or g.wind_wallet<12
 	market.text="晨市已开张　·　每篮多收 2 枚" if g.market_open else ("3　合办码头晨市　·　投入 12，每篮加收 2" if eligible else "完成首次捎货，可与伊娅合办晨市")
+	if eligible and not g.market_open and g.wind_wallet<12:market.text="还差 %d 枚就能开晨市"%(12-g.wind_wallet)
 	show()

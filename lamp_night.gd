@@ -1,5 +1,10 @@
 extends "res://tide_night.gd"
 
+signal wish_accepted(id:int)
+var wish_id:=-1
+var wish_mask:=0
+var quay_welcome:=""
+var wishes:Node3D
 signal grain_progress(barge:Vector2,helm:Vector2,yaw:float,bumps:int,barge_yaw:float,velocity:Vector2)
 signal grain_signed(bumps:int)
 var mail_pin:=preload("res://world_pin.gd").new()
@@ -60,9 +65,14 @@ var bronze:Node3D
 var kiln_talk:=0.0
 var tile_signs:Array[Sprite3D]=[]
 var used_echo:=false
+var hail_age:=12.
+var hailed_worker:=false
 var first_look:=0.0
+var stair_look:=0.
+var looking_at_steps:=false
 var ferry_guide:Control
 var worker_aboard:=false
+var fare_scene:Node3D
 var worker:Node3D
 var oven_installed:=false
 var harbour_charter:=preload("res://lamp_charter.gd").new()
@@ -81,6 +91,7 @@ var audio:
 	get:return sound
 var wind_job:=false
 var ceremony:=-1.
+var pier_fade:ColorRect
 var lantern_crate:Node3D
 var pots:Node3D
 var transfer_node:Node3D
@@ -105,10 +116,11 @@ func _ready()->void:
 	hud.add_child(harbour_charter);harbour_charter.mirror_requested.connect(request_mirror)
 	add_child(quay);quay.position=Vector3(BERTH.x,.10,BERTH.y+3.4);quay.oven_installed=oven_installed;quay.waterfront();quay.build(works==3)
 	if harbor_bell:
+		wishes=preload("res://quay_wishes.gd").new();add_child(wishes);wishes.build(self,wish_id,wish_mask);wishes.signed.connect(func(id:int):wish_accepted.emit(id))
+		var moored:=preload("res://harbor_convoy.gd").new();add_child(moored);moored.position=Vector3(-23.,-.51,30.8);moored.scale=Vector3.ONE*.71;moored.show_return(12.)
 		preload("res://listening_herm.gd").new().build(quay,Vector3(6.28,.53,2.85),PI*.91,1.52)
 		pilots=preload("res://night_pilots.gd").new();add_child(pilots);pilots.build(quay,cam.environment)
 		ferry_guide=preload("res://ferry_guide.gd").new();ferry_guide.job=self;hud.add_child(ferry_guide)
-		if works==3:pilots.shift=1.
 		if mirror_built:pilots.mount_mirror(quay)
 		bronze=preload("res://bell_cast.gd").new();quay.add_child(bronze);bronze.position=Vector3(4.5,2.3,0);bronze.scale=Vector3.ONE*.8
 		for s in [-1,1]:art.beam(quay,Vector3(4.5,0,s),Vector3(4.5,3.45,s),.11,"#96734f")
@@ -130,7 +142,7 @@ func _ready()->void:
 	add_child(fire_chime);fire_chime.stream=preload("res://audio/blue_quay_clay.wav");fire_chime.volume_db=-10
 	add_child(ropes);ropes.stream=preload("res://audio/blue_quay_rope.wav");ropes.volume_db=-9
 	quay.add_child(voices);voices.position=Vector3(0,1,1);voices.stream=preload("res://audio/blue_quay_evening.wav");voices.max_distance=24.;voices.unit_size=8.;voices.volume_db=-12
-	worker=art.courier(boat);preload("res://zephyr_people.gd").new().costume(worker,"miller");worker.position=Vector3(.7,.53,-.6);worker.scale=Vector3.ONE*.78;worker.visible=worker_aboard
+	worker=art.courier(boat,true);preload("res://zephyr_people.gd").new().costume(worker,"miller");worker.position=Vector3(.7,.53,-.6);worker.scale=Vector3.ONE*.78;worker.visible=worker_aboard
 	lantern_crate=quay.lantern(boat,Vector3(-.82,.76,-.49));lantern_crate.visible=works==2
 	marker=design.label(self,Vector3(BERTH.x,5.7,BERTH.y+3),"蓝棚木阶",face,"#ffe4af")
 	install_tile(quay,Vector3(-3.67,2.15,-.7),preload("res://art/watch_blue.jpg"),1.0)
@@ -138,6 +150,8 @@ func _ready()->void:
 	pots=preload("res://kiln_workshop.gd").new();docks[3].add_child(pots);pots.build(quay,works,works==3 and not worker_aboard)
 	fruit_crate=make_fruit_case(boat,Vector3(-1.35,.65,.48));fruit_crate.visible=fruit_reserved
 	fruit_display=make_fruit_case(docks[3],Vector3(.5,.63,1.5));fruit_display.visible=fruit_sold_before
+	if harbor_bell:
+		fare_scene=preload("res://quay_fare.gd").new();add_child(fare_scene);fare_scene.build(self)
 	marker.pixel_size=.013
 	if works==1:say("窑工在双灯窑等船 · 去东面的双灯火取陶灯",4)
 	if bell_boarding:
@@ -187,7 +201,7 @@ func tow_use()->bool:
 		if lighter.location.distance_to(BERTH)>13.:say("驳船还在外侧 · 缓缓靠岸等船尾入港");return true
 		grain_status=2;lighter.moor_to(BERTH+Vector2(5.,.45));unload_age=0.
 		quay.grain_received();grain_signed.emit(lighter.impacts);chord.play()
-		var pay:=12+maxi(0,6-2*int(lighter.impacts))+(6 if mill_trade else 0)
+		var pay:=12+(2 if harbor_bell else 0)+maxi(0,6-2*int(lighter.impacts))+(6 if mill_trade else 0)
 		say("运费 %d 枚 · 伊娅升起谷神麦穗印，明早开炉！"%pay,5.);return true
 	return false
 
@@ -208,6 +222,10 @@ func change_works(value:int)->void:
 	works=value;works_changed.emit(value)
 
 func pulse()->void:
+	if first_passenger_waiting() and not hailed_worker and pos.distance_to(BERTH)<9.:
+		hailed_worker=true;hail_age=0.;horn.play()
+		say("船夫：我替你问问对岸。",1.40)
+		return
 	var ready:=pulse_charge>=.99
 	super()
 	if ready and is_instance_valid(pilots):
@@ -215,6 +233,9 @@ func pulse()->void:
 		if works==2 and grain_status!=1:say("船夫：它听见了！沿着亮起来的浮灯回木阶。",3.4)
 	if ready and grain_status==1 and net_gate.call_keeper(pos):
 		ropes.play();say("闸工听见了 · 网门升起，领船从内孔过",2.8)
+
+func first_passenger_waiting()->bool:
+	return stage=="sail" and harbor_bell and works==3 and not worker_signed and not worker_aboard and seats.is_empty() and not bread_loaded and not fruit_reserved and grain_status==0 and not (harbor_song and bell_boarding and letter_stage<2)
 
 func begin_transfer(node:Node3D,from:Vector3)->void:
 	transfer_node=node;transfer_start=from;transfer_left=1.25
@@ -246,6 +267,8 @@ func move_letter(next:int)->void:
 	family_letter.global_position=origin;letter_progress.emit(next)
 
 func use()->void:
+	if is_instance_valid(wishes) and wishes.near_boat():
+		wishes.read_note();return
 	if harbor_song and stage=="sail" and absf(speed)<2.6:
 		if letter_stage==0 and pos.distance_to(BERTH)<5.2:
 			move_letter(1);sound.play_cue("grab");say("渡工女儿：信里写着爸爸到家了。双灯窑的窑工会替我捎给爷爷。",4.2);return
@@ -255,6 +278,7 @@ func use()->void:
 	if harbor_bell and stage=="sail" and works==0 and port==3 and absf(speed)<2.6 and grain_status!=1 and not worker_aboard and not bread_loaded and not fruit_reserved and not seats.any(func(id): return STOPS[id]==3):
 		if not lamp_offer:
 			lamp_offer=true;say("窑工：木阶上黑，昨晚我险些踩空。这盏灯烧好了，能替我带回去吗？",6.);return
+		if kiln_talk<.95:return
 		change_works(1)
 
 	if stage=="sail" and fruit_reserved and port==3 and absf(speed)<2.7:
@@ -265,7 +289,9 @@ func use()->void:
 		if absf(speed)>2.7:say("收桨后再系缆");return
 		if works==3:
 			if worker_aboard:
+				var first_home:=not worker_signed
 				worker_aboard=false;worker_signed=true;paid_crossings+=1;quay.seat_regular();quay.local_worker.hide();walking_home=true;begin_transfer(worker,worker.global_position);launch_lighter();worker_home.emit();chord.play()
+				if fare_scene:fare_scene.begin(true,first_home)
 				say("窑工：这回看得清台阶了。给，今晚的船钱，8 枚。",3.4);return
 			if not seats.is_empty():say("先送船上乘客下船，再从木阶换班");return
 			if bread_loaded:say("双灯窑还等着船上的面包");return
@@ -273,20 +299,26 @@ func use()->void:
 			change_shift.emit();return
 		speed=0;stage="winch";freight=lantern_crate
 		rig=preload("res://quay_crane.gd").new();add_child(rig)
-		ropes.play();rig.begin(self,BERTH+Vector2(-.28,3.5));sound.play_cue("load");return
+		ropes.play();rig.begin(self,BERTH+Vector2(-.28,3.5),quay.lampholder.global_position.y);sound.play_cue("load");return
 	if stage=="sail" and port==3 and works==1 and absf(speed)<=2.7:
 		change_works(2);pots.clay.hide();lantern_crate.show();begin_transfer(lantern_crate,pots.tray.to_global(Vector3(0,.72,0)));fire_chime.play();say("窑工把陶灯装上了船。回蓝棚木阶，让伊娅点火。",4);return
 	if stage=="sail" and works==3 and port==3 and absf(speed)<2.7 and not worker_aboard and seats.size()<2 and not bread_loaded:
 		var dropping:=false
 		for id in seats: dropping=dropping or STOPS[id]==3
 		if not dropping and grain_status!=1:
-			worker_aboard=true;worker.show();pots.buyer.hide();boarding_worker=true;begin_transfer(worker,pots.buyer.global_position);worker_boarded.emit();sound.play_cue("grab");say("窑工：晚班收工了。劳驾，送我到亮灯的木阶。",3);return
+			worker_aboard=true;worker.show();pots.buyer.hide();boarding_worker=true;begin_transfer(worker,pots.buyer.global_position);worker_boarded.emit();sound.play_cue("grab")
+			if fare_scene:fare_scene.begin(false,not worker_signed)
+			say("窑工：晚班收工了。劳驾，送我到亮灯的木阶。",3);return
 	if worker_aboard and seats.size()==1 and port>=0 and STOPS[seats[0]]!=port and not (port==3 and bread_loaded):
 		say("窑工占一席 · 先送船上乘客下船");return
 	super()
 
 func _unhandled_key_input(e:InputEvent)->void:
 	if e is InputEventKey and e.pressed and not e.echo:
+		if is_instance_valid(wishes) and wishes.reading:
+			if e.keycode==KEY_ESCAPE:wishes.dismiss()
+			elif e.keycode in [KEY_E,KEY_ENTER]:wishes.confirm()
+			get_viewport().set_input_as_handled();return
 		if harbour_charter.visible:
 			if e.keycode in [KEY_ENTER,KEY_KP_ENTER]:request_mirror()
 			elif e.keycode in [KEY_E,KEY_ESCAPE,KEY_Q]:harbour_charter.hide()
@@ -306,6 +338,9 @@ func _unhandled_key_input(e:InputEvent)->void:
 	super(e)
 
 func _physics_process(dt:float)->void:
+	if is_instance_valid(wishes):
+		wishes.tick(dt)
+		if is_instance_valid(wishes) and wishes.reading:return
 	if is_instance_valid(pilots) and not harbour_charter.visible:
 		pilots.tick(dt,pos,works,cam.environment)
 		pilots.swing_bell(bronze,dt)
@@ -331,6 +366,13 @@ func _physics_process(dt:float)->void:
 		return
 	if works==3 and not worker_aboard and pos.distance_to(PORTS[3])>13.:pots.buyer.show()
 	pots.tick(waves,pos.distance_to(PORTS[3])<12.);move_transfer(dt)
+	if first_passenger_waiting():
+		if hailed_worker and (absf(speed)>=1. or chart.large):hail_age=maxf(hail_age,3.)
+		if hail_age<.72 and hail_age+dt>=.72:
+			pots.shore_answer.play()
+			say("船夫：你看，窑工举灯了。他要搭末班船。",3.65)
+		hail_age+=dt
+	pots.ferry_signal(waves,hail_age,first_passenger_waiting())
 	if stage not in ["winch","lighting"]:
 		var previous:=pos
 		super(dt)
@@ -383,7 +425,7 @@ func _physics_process(dt:float)->void:
 			if absf(speed)>.6:first_look=maxf(first_look,4.)
 			var intro_weight:=smoothstep(0.,.5,first_look)*(1.-smoothstep(2.35,3.55,first_look))
 			cam.global_transform=cam.global_transform.interpolate_with(quay_view(),intro_weight)
-		for sign_tile:Sprite3D in tile_signs:sign_tile.visible=kiln_talk<.12 and intro_finished()
+		for sign_tile:Sprite3D in tile_signs:sign_tile.visible=kiln_talk<.12 and intro_finished() and not watching_kiln()
 		if kiln_talk>.01:port_names[3].hide()
 		if kiln_talk>.005:
 			var lamp_spot:Vector3=pots.tray.global_position.lerp(pots.potter.global_position,.74)+Vector3.UP*1.06
@@ -394,6 +436,21 @@ func _physics_process(dt:float)->void:
 			var off:=Vector3(4.25,2.85,-4.82)
 			var blend:=smoothstep(0.,.45,mirror_age)*(1.-smoothstep(3.45,4.78,mirror_age))
 			cam.global_transform=cam.global_transform.interpolate_with(Transform3D(Basis.looking_at(-off,Vector3.UP),focus+off),blend)
+		if watching_kiln():
+			var boatman:Vector3=pots.buyer.global_position+Vector3.UP*.95
+			var eye:Vector3=boatman+pots.global_basis*Vector3(-2.8,.80,1.65)
+			var response:=Transform3D(Basis.looking_at(boatman-eye,Vector3.UP),eye)
+			cam.global_transform=response
+			chart.hide();port_names[3].hide()
+		var waiting_for_letter:=bell_boarding and harbor_song and letter_stage==0
+		looking_at_steps=harbor_bell and works in [0,1,2] and seats.is_empty() and not bread_loaded and not fruit_reserved and grain_status==0 and not waiting_for_letter and letter_motion<0. and pos.distance_to(BERTH)<8. and absf(speed)<1.8 and not chart.large and (works==2 or message_left<=0.)
+		if looking_at_steps:
+			stair_look+=dt
+			var gesture:=sin(PI*clampf((stair_look-.3)/2.,0.,1.))
+			quay.stair_pose(0.,gesture)
+			var framing:=smoothstep(.0,.5,stair_look)*(1.-smoothstep(2.1,2.9,stair_look))
+			cam.global_transform=cam.global_transform.interpolate_with(stair_view(),framing)
+		if fare_scene:fare_scene.tick(dt)
 		update_story_pin()
 		if works==3 and pos.distance_to(BERTH)<21 and not voices.playing:voices.play()
 		if stage=="sail" and pos.x>BERTH.x-4.8 and pos.x<BERTH.x+4.8 and pos.y>BERTH.y+.78 and pos.y<BERTH.y+6.1:
@@ -403,19 +460,43 @@ func _physics_process(dt:float)->void:
 	var at:=quay.global_position+Vector3(0,1,0)
 	var offset:=Vector3(-5.,6.0,-8.)
 	marker.visible=false
-	cam.transform=cam.transform.interpolate_with(Transform3D(Basis.looking_at(-offset,Vector3.UP),at+offset),1.-exp(-3.8*dt))
+	if stage=="winch":cam.transform=cam.transform.interpolate_with(Transform3D(Basis.looking_at(-offset,Vector3.UP),at+offset),1.-exp(-3.8*dt))
 	if stage=="winch":
 		if rig.tick(dt,float(Input.is_key_pressed(KEY_D))-float(Input.is_key_pressed(KEY_A))):
-			if rig.alignment>1.4:
+			if rig.alignment>1.22:
 				rig.queue_free();marker.show();stage="sail";freight.reparent(boat,false);freight.position=Vector3(-.82,.76,-.49);say("灯座未对准 · E 重新挂索");return
-			freight.hide();rig.queue_free();ceremony=0;stage="lighting";change_works(3);chord.play()
+			transfer_start=freight.global_position
+			rig.queue_free();ceremony=0;stage="lighting";change_works(3);chord.play()
+			pier_fade=ColorRect.new();hud.add_child(pier_fade)
+			pier_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			pier_fade.mouse_filter=Control.MOUSE_FILTER_IGNORE; pier_fade.color=Color("#182a32");pier_fade.modulate.a=0.
 	else:
 		ceremony+=dt;quay.animate(ceremony)
-		cam.global_transform=cam.global_transform.interpolate_with(quay_view(),smoothstep(.04,1.04,ceremony))
+		if ceremony<.68:
+			quay.lampholder.hide()
+			freight.global_position=transfer_start.lerp(quay.lampholder.global_position,smoothstep(.0,.60,ceremony))
+			freight.rotation=freight.rotation.lerp(Vector3.ZERO,1.-exp(-dt*10.))
+		else:freight.hide()
+		var wick:=quay.lights[0].global_position
+		if ceremony<1.90:
+			var eye:=Vector3(-2.25,.65,.47)
+			cam.global_transform=Transform3D(Basis.looking_at(-eye,Vector3.UP),wick+eye)
+		elif ceremony<4.82:
+			var focus:=quay.to_global(Vector3(.48,1.50,.59))
+			var eye:=Vector3(-4.30,3.40,-8.5)*(1.+.055*smoothstep(1.9,4.4,ceremony))
+			cam.global_transform=Transform3D(Basis.looking_at(-eye,Vector3.UP),focus+eye)
+		else:
+			cam.global_transform=stair_view()
+		pier_fade.modulate.a=smoothstep(quay.END_OF_SHIFT-.35,quay.END_OF_SHIFT,ceremony)
 		if lit_count<3 and ceremony>=1.25+.64*lit_count:
 			fire_chime.pitch_scale=[.82,1.0,1.23][lit_count];fire_chime.play();lit_count+=1
 		if ceremony>3.4 and not voices.playing:voices.play()
-		if ceremony>=5.4:pots.buyer.show();marker.show();stage="sail";say("船夫：「以后认这三盏灯靠岸。」",3.)
+		if ceremony>=quay.END_OF_SHIFT:
+			quay.plaque.show();pots.buyer.show();marker.show();stage="sail"
+			var opening:=create_tween()
+			opening.tween_property(pier_fade,"modulate:a",0.,.38).set_trans(Tween.TRANS_SINE)
+			opening.tween_callback(pier_fade.queue_free)
+			say("船夫：「以后认这三盏灯靠岸。」",3.)
 	ui_update()
 
 func ui_update()->void:
@@ -429,7 +510,8 @@ func ui_update()->void:
 		title.text="蓝棚木阶　/　"+("安装陶灯" if stage=="winch" else "第一盏晚灯")
 		guide.hide();deck.hide();chart.hide();task.show();action.show()
 		task.text="A D 移吊车　·　空格脱钩" if stage=="winch" else "伊娅从炉膛取火，船夫沿木阶传灯"
-		action.text=rig.hint if stage=="winch" else "共建署名　伊娅、窑工、船夫和你"
+		action.text=rig.hint if stage=="winch" else "";action.visible=stage=="winch"
+		if stage=="lighting":task.hide();title.hide();quay.plaque.hide()
 	elif stage=="sail":
 		title.text="卡戎的夜班　/　冥河渡客"
 		if worker_aboard:deck.text="船上　晚班窑工 → 蓝棚木阶"+("　·　"+GUESTS[seats[0]] if not seats.is_empty() else "　·　空座一席")
@@ -461,8 +543,8 @@ func ui_update()->void:
 			guide.text="W S  划船 / 倒船　　A D  掌舵　　Tab  航图"
 			deck.visible=letter_stage==1
 		if letter_stage==1 and message_left<=0. and port!=3:action.hide()
-		if letter_stage==0 and pos.distance_to(BERTH)<5.2 and absf(speed)<2.6:action.text="渡工女儿举起了信　·　E 接过回信";action.show()
-		elif letter_stage==1 and port==3 and absf(speed)<2.6:action.text="窑工等着收信　·　E 递进上山邮袋";action.show()
+		if message_left<=0. and letter_stage==0 and pos.distance_to(BERTH)<5.2 and absf(speed)<2.6:action.text="渡工女儿举起了信　·　E 接过回信";action.show()
+		elif message_left<=0. and letter_stage==1 and port==3 and absf(speed)<2.6:action.text="窑工等着收信　·　E 递进上山邮袋";action.show()
 	if posted_age>=0. and posted_age<5.5 and stage=="sail":
 		task.text="家书已收进明早上山的邮袋";deck.text="捎信运费  +5 枚"
 	elif posted_age>=5.5 and stage=="sail":
@@ -471,11 +553,14 @@ func ui_update()->void:
 
 	if harbor_bell and stage=="sail" and not chart.large and not harbour_charter.visible and grain_status!=1:
 		var has_letter:=harbor_song and letter_stage<2 and bell_boarding
-		if works==0 and not has_letter and not worker_aboard and seats.is_empty() and not bread_loaded and not fruit_reserved:
+		if posted_age>=0. and posted_age<5.5:task.text="信已进邮袋。明早，爷爷就知道红帆到家了。"
+		elif works==0 and not has_letter and not worker_aboard and seats.is_empty() and not bread_loaded and not fruit_reserved:
 			task.text="顺路去双灯窑，问问窑工缺什么。"
 			if port==3 and absf(speed)<2.6 and (message_left<=0. or lamp_offer):
 				action.text="E  答应带灯　·　也可以直接开船离开" if lamp_offer else "E  和窑工说话"
-				if lamp_offer:task.text="窑工：台阶太黑了。能把这盏灯带回去吗？"
+				if lamp_offer:
+					task.text="窑工：木阶上黑，昨晚我险些踩空。能把这盏灯带回去吗？"
+					if kiln_talk<.95:action.text=""
 				action.show()
 		if works==2:
 			task.text="把陶灯运回蓝棚木阶"
@@ -486,20 +571,37 @@ func ui_update()->void:
 		if works==3 and worker_aboard:task.text="把晚班窑工送到亮灯的木阶　·　船资 8 枚"
 		action.reset_size();action.position.x=(1280-action.size.x)/2
 
-	if is_instance_valid(ferry_guide):ferry_guide.update_view()
+	if stage=="sail":title.show()
+	if is_instance_valid(ferry_guide):
+		ferry_guide.update_view()
+		if stage=="lighting":ferry_guide.hide()
+	if watching_steps():
+		title.hide();guide.hide();deck.hide();chart.hide();task.hide();action.hide();mail_pin.hide()
+		if is_instance_valid(ferry_guide):ferry_guide.hide()
+
+	if is_instance_valid(wishes) and wishes.near_boat():
+		action.text="E　读一读居民留下的纸条";action.show();action.reset_size();action.position.x=(1280-action.size.x)*.5
+		if is_instance_valid(ferry_guide):ferry_guide.hide()
+
+func watching_kiln()->bool:
+	return hailed_worker and hail_age>=.72 and hail_age<2.75 and first_passenger_waiting() and absf(speed)<1. and not chart.large and pos.distance_to(BERTH)<9.
+
+func watching_steps()->bool:
+	return stage=="sail" and looking_at_steps and stair_look>.32 and stair_look<2.45
 
 func intro_finished()->bool:
 	return first_look<.05 or first_look>3.1
 
 func update_story_pin()->void:
 	mail_pin.hide()
-	if not harbor_bell or stage!="sail" or chart.large or harbour_charter.visible or grain_status==1:return
+	if watching_steps() or watching_kiln() or not harbor_bell or stage!="sail" or chart.large or harbour_charter.visible or grain_status==1:return
 	if kiln_talk>.12 or not intro_finished():return
 	if not seats.is_empty() or bread_loaded or fruit_reserved:return
 	var slow:=absf(speed)<2.6
 	var quay_range:=pos.distance_to(BERTH)<5.2
 	var kiln_range:=port==3
 	mail_pin.beside=false
+	if first_passenger_waiting() and not kiln_range and not hailed_worker:return
 	if worker_aboard or works==2:
 		if works==2 and pilots.wave>=0. and not quay_range:return
 		mail_pin.target=quay.to_global(Vector3(.35,1.1,-.65))
@@ -526,6 +628,11 @@ func fit_mirror(balance:int)->void:
 	pilots.mount_mirror(quay);harbour_charter.hide()
 	fire_chime.play();say("船夫：镜子对准了。你看，外弯那块暗礁亮起来了。",4.8)
 
+
+func stair_view()->Transform3D:
+	var focus:=quay.to_global(Vector3(1.06,1.08,2.13))
+	var eye:=Vector3(-1.9,1.46,3.05)
+	return Transform3D(Basis.looking_at(-eye,Vector3.UP),focus+eye)
 
 func quay_view()->Transform3D:
 	var focus:=quay.to_global(Vector3(.48,1.50,.59))

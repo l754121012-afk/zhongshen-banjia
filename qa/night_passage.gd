@@ -39,10 +39,13 @@ func moor()->void:
 	while n.speed>0.25:key(KEY_S,true);await frames(1)
 	key(KEY_S,false);await frames(10);tap(KEY_E);await frames(10)
 func run()->void:
+	var disk:=OS.get_environment("OLYMPUS_TRIAL_PROFILE")
+	if not FileAccess.file_exists(disk):
+		var seed:=ConfigFile.new();seed.set_value("bell","done",true);seed.save(disk)
 	film=OS.get_cmdline_user_args().has("--film")
 	AudioServer.set_bus_mute(0,not film)
 	base=load("res://vineyard.tscn").instantiate();root.add_child(base);base.set_physics_process(false)
-	check(base.board.continuation.visible,"board offers contextual continuation");tap(KEY_ENTER);await process_frame;n=base.dock_order;n.set_physics_process(false)
+	check(base.board.continuation.visible,"board offers contextual continuation");tap(KEY_ENTER);await process_frame;n=base.dock_order;n.set_physics_process(false);await skip_intro()
 	await frames(48)
 	check(n.pos.distance_to(n.BERTH)<4. and n.harbor_bell,"shore bell from first delivery")
 	await shot("01-quay")
@@ -52,7 +55,7 @@ func run()->void:
 	tap(KEY_E);await frames(38);check(base.lamp_step==2 and n.lantern_crate.visible,"offered lamp attached to deck")
 	if base.lamp_step!=2:quit(1);return
 	copy_save("clay")
-	tap(KEY_ESCAPE);await process_frame;base.open_tide_dock(true,false,true);await process_frame;n=base.dock_order;n.set_physics_process(false)
+	tap(KEY_ESCAPE);await process_frame;base.open_tide_dock(true,false,true);await process_frame;n=base.dock_order;n.set_physics_process(false);await skip_intro()
 	check(n.lantern_crate.visible and n.works==2 and n.pos.distance_to(n.PORTS[3])<4.,"resume loaded near kiln")
 	for p:Vector2 in [Vector2(17,20),Vector2(11,19)]:await steer(p)
 	tap(KEY_SPACE);await frames(57)
@@ -61,20 +64,29 @@ func run()->void:
 	for p:Vector2 in [Vector2(3,22),Vector2(-8,23)]:await steer(p)
 	await moor();check(n.stage=="winch","start quay winch")
 	if n.stage!="winch":quit(1);return
+	await frames(37);tap(KEY_SPACE);await frames(82)
+	check(n.stage=="sail" and n.works==2 and n.lantern_crate.visible and n.lantern_crate.get_parent()==n.boat,"off-target drop recovers the same lamp on deck")
+	if n.stage!="sail":quit(1);return
+	tap(KEY_E);await frames(28)
+	check(n.stage=="winch","re-hook the recovered lamp")
 	var rig=n.rig
 	for i in 340:
 		var err:float=rig.length-rig.trolley
 		key(KEY_D,err>maxf(.08,rig.velocity*absf(rig.velocity)/16+.09));key(KEY_A,err<minf(-.08,rig.velocity*absf(rig.velocity)/16-.09));await frames(1)
 		if absf(err)<.20 and absf(rig.velocity)<.24:break
-	key(KEY_D,false);key(KEY_A,false);await frames(6);await shot("04-winch");tap(KEY_SPACE);await frames(90);await shot("05-handover");await frames(110)
+	key(KEY_D,false);key(KEY_A,false);await frames(6);await shot("04-winch");tap(KEY_SPACE);await frames(90);await shot("05-handover");await frames(155)
 	check(base.lamp_step==3 and n.quay.plaque.visible,"lit quay")
 	if base.lamp_step!=3:quit(1);return
+	n.pulse_charge=.12;tap(KEY_SPACE);await frames(28)
+	check(n.hailed_worker and n.watching_kiln() and n.pots.watch_lamp.visible,"a moored boat can hail the waiting passenger on an empty sonar charge")
+	await frames(95)
+	check(not n.watching_kiln() and n.stage=="sail","optional kiln reply returns the helm")
 	for r in 2:
 		for p:Vector2 in [Vector2(0,22),Vector2(10,20),Vector2(23.5,19)]:await steer(p)
 		await moor();await frames(32);check(n.worker_aboard and base.worker_ticket,"passenger boards")
 		if r==1:
 			copy_save("passenger")
-			tap(KEY_ESCAPE);await process_frame;base.open_tide_dock(true);await process_frame;n=base.dock_order;n.set_physics_process(false)
+			tap(KEY_ESCAPE);await process_frame;base.open_tide_dock(true);await process_frame;n=base.dock_order;n.set_physics_process(false);await skip_intro()
 			check(n.worker_aboard and n.worker.visible and n.worker_signed,"repeat ticket resumes")
 		var before:int=base.wind_wallet
 		for p:Vector2 in [Vector2(14,21),Vector2(4,22),Vector2(-8,23)]:await steer(p)
@@ -89,12 +101,19 @@ func run()->void:
 	await shot("08-mirror");await frames(90);tap(KEY_Q);tap(KEY_ENTER);await frames(2)
 	check(base.wind_wallet==funds_before-6,"no duplicate construction charge")
 	copy_save("mirror");tap(KEY_ESCAPE);tap(KEY_ESCAPE);await process_frame
-	base.open_tide_dock(true);await process_frame;n=base.dock_order;n.set_physics_process(false)
+	base.open_tide_dock(true);await process_frame;n=base.dock_order;n.set_physics_process(false);await skip_intro()
 	check(n.mirror_built and n.pilots.reflector!=null,"mirror present on next shift")
-	base.queue_free();await process_frame;await create_timer(.3).timeout;print("ERRORS ",errs);quit(1 if errs else 0)
+	check(n.quay.lunch_pail.global_position.distance_to(n.quay.apprentice_grip.global_position)<.25,"lit quay remembers the handed-over meal")
+	check(n.quay.stair_worker.position.y>.60 and n.quay.stair_worker.position.z>2.7,"night worker stays on the lit landing")
+	n.queue_free();base.queue_free();await process_frame;await create_timer(.5).timeout;print("ERRORS ",errs);quit(1 if errs else 0)
 
 
 func copy_save(phase:String)->void:
 	var prefix:=OS.get_environment("NIGHT_CHECKPOINTS")
 	if prefix!="":
 		check(DirAccess.copy_absolute(base.postmark_file(),prefix+"-"+phase+".cfg")==OK,"checkpoint "+phase)
+
+func skip_intro()->void:
+	var scene=n.get_node_or_null("ArrivalFilm")
+	if scene:
+		tap(KEY_ESCAPE);scene._process(.7);await process_frame

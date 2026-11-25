@@ -5,6 +5,7 @@ signal arrived
 signal post_marked
 signal cargo_cue(id:String)
 const Catch:=preload("res://cargo_catch.gd")
+var rope_grip:=Catch.new()
 const Art=preload("res://workshop.gd")
 const DockArt=preload("res://tide_art.gd")
 const Town=preload("res://district.gd")
@@ -201,8 +202,8 @@ func nearest(p:Vector2)->Dictionary:
 	return out
 
 func brace()->void:
-	if catch_left<=0.:return
-	brace_left=Catch.DURATION;catch_left=0.;cargo_cue.emit("grab")
+	if not rope_grip.available(lateral/.84,speed,catch_left,brace_left):return
+	rope_grip.take();brace_left=Catch.DURATION;catch_left=0.;cargo_cue.emit("grab")
 
 func use()->String:
 	if pos.distance_to(xz(FINISH))<5.4:
@@ -272,7 +273,7 @@ func tick(dt:float,gas:float,turn:float)->void:
 	var side:=int(signf(drift))
 	if catch_left<=0. and brace_left<=0. and (side!=slide_side or absf(drift)<.08):slide_side=0
 	if slide_side==0 and absf(speed)>.5 and Catch.reaches_rail(.84-lateral*side,absf(drift),0.,.10):
-		slide_side=side;catch_left=Catch.WINDOW;cargo_cue.emit("buckle")
+		slide_side=side;catch_left=Catch.WINDOW
 	lateral=clampf(lateral+drift*dt,-.84,.84)
 	if absf(lateral)>0.825 and absf(speed)>5.6 and not rail_struck and catch_left<=0 and brace_left<=0:
 		rail_struck=true
@@ -280,6 +281,7 @@ func tick(dt:float,gas:float,turn:float)->void:
 	if absf(lateral)<0.50:rail_struck=false
 	if brace_left>0:
 		lateral=move_toward(lateral,0,Catch.grip_step(minf(dt,brace_left)));brace_left=maxf(0,brace_left-dt)
+	if rope_grip.tick(lateral/.84,speed,catch_left,brace_left,before.distance_to(pos)):cargo_cue.emit("buckle")
 	view_heading=lerp_angle(view_heading,heading,1-exp(-dt*4.5))
 	on_summit=pos.distance_to(xz(FINISH))<5.4
 	place_truck(lerpf(van.rotation.z,slope,1-exp(-dt*4)),turn,dt)

@@ -5,6 +5,7 @@ var shade:=ColorRect.new()
 var veil:=ShaderMaterial.new()
 var useful:=false
 var fork_window:=false
+var fork_wait:=0.
 var spotlight:=0.0
 var intensity:=0.0
 var focus_uv:=Vector2(.5,.5)
@@ -24,11 +25,15 @@ func tick(dt:float)->void:
 	var g=state
 	beside=g.stage in ["call","arrival","listen","silence","first_drop","mountain","ring"]
 	useful=false;optional=false;spotlight=0.
-	fork_window=g.stage=="drive" and not g.pause_panel and g.pos.x>g.land.FORK-32. and g.pos.x<g.land.FORK+51. and cos(g.yaw)>.24 and g.catch_left<=0.
+	var near_fork:bool=g.stage=="drive" and not g.pause_panel and g.pos.x>g.land.FORK-32. and g.pos.x<g.land.FORK+51. and cos(g.yaw)>.24
+	if not near_fork:fork_wait=0.
+	elif absf(g.speed)<3.1:fork_wait+=dt
+	else:fork_wait=maxf(0.,fork_wait-dt*1.6)
+	fork_window=near_fork and g.catch_left<=0. and fork_wait>1.5
 	if not g.pause_panel:
 		match g.stage:
 			"opening":
-				spotlight=.18;target=g.land.captain.global_position+Vector3.UP*1.55
+				spotlight=0.
 			"call":mark(g.freight.global_position+Vector3.UP*1.4,"空格  敲钟",.44)
 			"first_drop":mark(g.lift.loads[0].global_position+Vector3.UP*.55,"学徒放篮了",.38)
 			"silence":mark(g.lift.loads[1].global_position+Vector3.UP*.5,"这一篮还吊着",.39)
@@ -59,7 +64,7 @@ func tick(dt:float)->void:
 			"dock":mark(g.land.harbor_frame.global_position+Vector3.UP*2.5,"E  请铜匠修钟" if g.hp<30. else "E  挂上吊索")
 			"ring":mark(g.freight.global_position+Vector3.UP*.85,"E  敲响港钟",.26)
 			"arrival":
-				if g.age>5. and g.learned:mark(g.coast.daughter.global_position+Vector3.UP*1.75,"渡工的女儿",.22)
+				if g.age>5. and g.age<9.8 and g.learned:mark(g.coast.daughter.global_position+Vector3.UP*1.75,"渡工的女儿",.22)
 	intensity=lerpf(intensity,spotlight,1.-exp(-dt*7.))
 	if (useful or spotlight>.01) and not g.cam.is_position_behind(target):
 		var projected:Vector2=g.cam.unproject_position(target)

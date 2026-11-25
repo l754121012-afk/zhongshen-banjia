@@ -11,7 +11,7 @@ func start()->void:
 func finish()->void:
 	base.return_from_tide_dock(0);base.queue_free();await process_frame
 func test()->void:
-	var file:=ConfigFile.new();file.set_value("port","day_best",55);file.set_value("port","night_best",21);file.save(OS.get_environment("OLYMPUS_TRIAL_PROFILE"))
+	var file:=ConfigFile.new();file.set_value("wishes","accepted",1<<3);file.set_value("port","day_best",55);file.set_value("port","night_best",21);file.save(OS.get_environment("OLYMPUS_TRIAL_PROFILE"))
 	start();check(base.wind_wallet==76,"migrate previous day and night records into spendable balance")
 	var start_balance:int=base.wind_wallet
 	base.rent_hood();base.rent_hood();check(job.rented and base.wind_wallet==64,"single 12 coin rental per dispatch")
@@ -28,7 +28,7 @@ func test()->void:
 	job.pos=Vector2(50,0);job.speed=0;job.cargo_shift=.61;job.catch_window=0.
 	var click:=InputEventMouseButton.new();click.button_index=MOUSE_BUTTON_LEFT;click.pressed=true;job._input(click)
 	check(job.correction==0.,"no click correction while parked")
-	job.catch_window=.45;job._input(click);var before:float=job.cargo_shift
+	job.speed=.9;job.catch_window=.45;job._input(click);var before:float=job.cargo_shift
 	job.drive(.10,0.,0.);check(job.cargo_shift<before and job.cargo_shift>.35 and job.catch_window==0.,"catch gives gradual limited correction")
 	for i in 80:job._input(click);job.drive(.01,0.,0.)
 	check(job.cargo_shift>.245 and job.correction<=0.,"click spam cannot center sack")

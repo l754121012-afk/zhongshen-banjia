@@ -12,6 +12,8 @@ var receiver:Node3D
 var cam:=Camera3D.new()
 var pos:=Vector2(1.0,2.0)
 var heading:=0.0
+var chassis:=preload("res://road_chassis.gd").new()
+var wheel_traces:=preload("res://zephyr_wheels.gd").new()
 var speed:=0.0
 var pitch:=0.0
 var roll:=0.0
@@ -27,6 +29,7 @@ const RAIL:=Vector2(0.37,0.56)
 var load_offset:=Vector2.ZERO
 var load_velocity:=Vector2.ZERO
 const Catch:=preload("res://cargo_catch.gd")
+var rope_grip:=Catch.new()
 const BRACE_DISTANCE:=Catch.PULL
 const BRACE_DURATION:=Catch.DURATION
 const CATCH_WINDOW:=Catch.WINDOW
@@ -146,6 +149,10 @@ var day_best:=0
 var night_best:=0
 var north_beacon:=false
 var diver_lamp:=false
+var known_jobs:int=1<<7
+var wine_delivered:=false
+var return_to_wishes:=false
+var quay_welcome:=""
 var board:=preload("res://harbour_board.gd").new()
 var book_button:=Button.new()
 var day_button:=Button.new()
@@ -219,6 +226,44 @@ func read_postmarks()->void:
 	wind_runs=int(profile.get_value("westwind","runs",0))
 	wind_last_charge=int(profile.get_value("westwind","charge",0))
 
+	known_jobs=int(profile.get_value("wishes","accepted",1<<7)) | (1<<7)
+	wine_delivered=bool(profile.get_value("wishes","wine_delivered",false))
+	if bell_done or night_best>0:known_jobs|=1<<2
+	if lamp_step>0 or lamp_worker_home:known_jobs|=1<<5
+	if day_best>0 or north_beacon:known_jobs|=1<<1
+	if spring.step>0 or spring.discovered:known_jobs|=1<<6
+	if wind_runs>0 or wind_level>0:known_jobs|=1<<3
+	if hearth_moved or bread_waiting:known_jobs|=1<<4
+	if market_open or inn_runs>0 or wine_delivered:known_jobs|=1
+
+func knows(id:int)->bool:
+	return id>=0 and id<8 and (known_jobs & (1<<id))!=0
+
+func next_wish()->int:
+	if not bell_done:return -1
+	if not knows(1):return 1
+	if not knows(3) and (day_best>0 or lamp_step>=2):return 3
+	if not knows(0) and (wind_runs>0 or lamp_worker_home):return 0
+	if not knows(6) and (wine_delivered or grain_status>=1):return 6
+	if not knows(4) and wind_level>0:return 4
+	return -1
+
+func sign_wish(id:int)->void:
+	if id!=next_wish() or id<0:return
+	known_jobs|=1<<id
+	file_postmarks()
+	return_from_tide_dock(0)
+	return_to_wishes=id in [1,3,4]
+	if id==4 and not hearth_moved:
+		call_deferred("office_action",0)
+	else:call_deferred("book_select",id)
+
+func close_book()->void:
+	board.hide()
+	if not knows(0):
+		if bell_done:open_tide_dock(true,true,true)
+		else:open_bell()
+
 func file_postmarks()->void:
 	var profile:=ConfigFile.new()
 	if profile.load(postmark_file())==OK:
@@ -226,6 +271,8 @@ func file_postmarks()->void:
 		north_beacon=north_beacon or bool(profile.get_value("port","north_beacon",false));diver_lamp=diver_lamp or bool(profile.get_value("port","diver_lamp",false))
 	profile.set_value("bell","blessed",bell_blessed);profile.set_value("bell","letter",bell_letter)
 	profile.set_value("bell","run",bell_record);profile.set_value("bell","done",bell_done);profile.set_value("bell","padding",bell_padding);profile.set_value("bell","song",bell_song)
+	profile.set_value("wishes","accepted",known_jobs)
+	profile.set_value("wishes","wine_delivered",wine_delivered)
 	spring.save_state(profile)
 	profile.set_value("port","day_best",day_best);profile.set_value("port","night_best",night_best)
 	profile.set_value("port","north_beacon",north_beacon);profile.set_value("port","diver_lamp",diver_lamp)
@@ -273,10 +320,9 @@ func file_postmarks()->void:
 
 func open_board()->void:
 	if not is_instance_valid(dock_order) and stage in ["pickup","signed"] and not is_instance_valid(porter):
-		board.refresh(day_best,night_best,north_beacon,diver_lamp,wind_level,wind_wallet,bread_waiting,freight_route,kiln_fare(),lamp_step,lamp_worker_home,grain_status)
-		board.continue_route("")
+		var next:="第一声港钟"
 		if bell_done:
-			var next:="去蓝棚木阶开夜班"
+			next="去蓝棚木阶"
 			if grain_status==2:next="去晨班看看新到的粮食"
 			elif grain_status==1:next="接着领粮驳进港"
 			elif worker_ticket:next="送船上的窑工回家"
@@ -284,22 +330,42 @@ func open_board()->void:
 			elif lamp_step==3:next="去双灯窑接晚班窑工"
 			elif lamp_step==2:next="把船上的陶灯送回木阶"
 			elif lamp_step==1:next="去双灯窑取陶灯"
-			elif bell_song:next=["去木阶见渡工的女儿","接着送船上的家书","去看看窑工烧的灯"][bell_letter]
-			board.continue_route(next)
-			board.stamps[2].text=["回声已到蓝棚　·　有封信待捎","船上有家书　·　送往双灯窑","双灯窑已寄出家书"][bell_letter] if bell_song else "白帆港的铜钟已为夜船报平安"
-		board.show()
+			elif bell_song:next=["去木阶见渡工的女儿","接着送船上的家书","看看窑工烧的灯"][bell_letter]
+		board.present(known_jobs,bell_done,next)
+
+const ArrivalFilm=preload("res://arrival_film.gd")
+var arrival_history:Dictionary={}
+
+func road_arrival()->bool:
+	if stage!="pickup" or not is_instance_valid(freight):return false
+	if bread_waiting and freight_route in [1,3]:
+		return ArrivalFilm.play(self,"road_bread",cam,[
+			[bread_sites[0],1.,Vector3(3.,1.6,4.2),"伊娅：客舍的早饭，就指着这篮刚出炉的面包。"],
+			[truck,1.1,Vector3(-4.,2.6,5.8),"从东岸码头接货。一路把面包送到月桂客舍。","接下公路班"]])
+	if returning or wind_job:
+		return ArrivalFilm.play(self,"return" if not wind_job else "tower_wind",cam,[
+			[freight,.65,Vector3(2.8,1.65,4.4),"集市收摊了。客舍托人留的睡榻，还在路边。" if not wind_job else "灯塔等着换班，客舍把最后一袋风留给了它。"],
+			[truck,1.,Vector3(4.7,2.7,6.),"先把车尾靠过来，我们好一起抬。","回到驾驶座"]])
+	return ArrivalFilm.play(self,"wine",cam,[
+		[freight,.65,Vector3(3.1,1.8,4.7).rotated(Vector3.UP,PI*2./3.),"酒庄的人已经把酒坛搬出了地窖。"],
+		[truck,1.,Vector3(4.8,2.7,5.8),"神庙还在等酒。把车尾靠到取货处吧。","回到驾驶座"]])
 
 func book_select(index:int)->void:
+	if not knows(index) and not (index==8 and bell_done):return
 	board.hide()
 	if index==8 and bell_done:
 		if grain_status==2 and not worker_ticket:open_tide_dock(false,true)
 		else:open_tide_dock(true,true,true)
 	elif index==7:open_bell()
-	elif index==6:spring.begin()
+	elif index==6:
+		spring.begin()
+		if spring.active:ArrivalFilm.spring_route(self)
 	elif index==5:office_action(6)
 	elif index==4:office.refresh(self)
 	elif index==3:open_westwind()
-	elif index>0:open_tide_dock(index==2)
+	elif index==2:open_tide_dock(true,true,true)
+	elif index==1:open_tide_dock()
+	else:road_arrival()
 
 func open_bell()->void:
 	if is_instance_valid(dock_order):return
@@ -315,7 +381,7 @@ func record_bell(song:bool,integrity:float,bought:bool)->void:
 	if not bell_done:
 		wind_wallet+=preload("res://bell_first.gd").fare(integrity,song,bell_record.get("repair",false))-(12 if bought else 0)
 		bell_padding=bought
-	bell_blessed=bell_blessed or bell_record.get("blessing",false);bell_done=true;bell_song=bell_song or song;bell_record={};file_postmarks()
+	bell_blessed=bell_blessed or bell_record.get("blessing",false);bell_done=true;known_jobs|=1<<2;bell_song=bell_song or song;bell_record={};file_postmarks()
 
 func _ready()->void:
 	read_postmarks()
@@ -358,6 +424,7 @@ func _ready()->void:
 	if grain_status==2:road_quay.grain_received()
 	if table_inn and table_crew:road_quay.set_feast()
 	truck=art.truck(self)
+	wheel_traces.build(self)
 	bread_case=make_bread(truck,Vector3(-2.22,1.15,.66));bread_case.visible=bread_waiting and freight_route==3
 	inn_table=make_bread(self,land.surface(Map.LODGE+Vector2(.8,2.4))+Vector3.UP*.87);inn_table.visible=inn_runs>0 or table_inn
 	art.box(self,inn_table.position-Vector3.UP*.13,Vector3(1.5,.17,.98),Art.WOOD)
@@ -422,7 +489,7 @@ func build_ui()->void:
 		btn.add_theme_stylebox_override("normal",card)
 		var hov:=card.duplicate() as StyleBoxFlat;hov.bg_color=card.bg_color.lightened(0.13);btn.add_theme_stylebox_override("hover",hov)
 		btn.size=Vector2(229,39);btn.position=Vector2(1027,21 if btn==day_button else 65)
-	book_button.position.y=109;book_button.text="P　港务委托簿"
+	book_button.position.y=109;book_button.text="P　我的航程"
 	book_button.pressed.connect(open_board)
 	day_button.pressed.connect(open_tide_dock)
 	night_button.pressed.connect(func():open_tide_dock(true))
@@ -442,7 +509,7 @@ func build_ui()->void:
 	title.add_theme_font_size_override("font_size",23)
 	controls.text="W 加速    S 刹车 / 倒车    A D 转向    空格 跳 / 空中借风    E 交接    R 重试"
 	add_child(spring);spring.setup(self)
-	layer.add_child(board);board.selected.connect(book_select);layer.add_child(office);office.chosen.connect(office_action);open_board()
+	layer.add_child(board);board.selected.connect(book_select);board.closed.connect(close_book);layer.add_child(office);office.chosen.connect(office_action);open_board()
 
 func forward_dir()->Vector2:
 	return Vector2(cos(heading),-sin(heading))
@@ -557,6 +624,7 @@ func begin_return()->void:
 	add_station(Map.GROVE,"静风亭 · 可停靠")
 	update_ui()
 	update_stations()
+	road_arrival()
 
 func begin_wind()->void:
 	wind_job=true
@@ -583,6 +651,7 @@ func begin_wind()->void:
 	land.sign_at(Vector2(144,13),"乘风赏门")
 	update_ui()
 	update_stations()
+	road_arrival()
 
 func condition_name()->String:
 	return "余风" if wind_job else ("安眠" if returning else "酒况")
@@ -649,6 +718,7 @@ func sign_order()->void:
 	ledger.append(fare+tip+bonus+quay_tip-cost)
 	wind_wallet+=maxi(0,ledger.back());produce();file_postmarks()
 	stage="signed"
+	wine_delivered=true;known_jobs|=1;file_postmarks()
 	receipt.text="%s签收  ·  %s  %s %d%%\n%s运费 %d × %d%% = %d   +   小费 %d" % [exit_name,"★".repeat(stars),condition_grade(),floori(health),landing_note,base,percent,fare,tip]
 	if bonus: receipt.text+="  +  乘风赏金 %d" % bonus
 	if quay_tip: receipt.text+="  +  正中软垫 %d" % quay_tip
@@ -756,8 +826,9 @@ func jump()->void:
 	audio.play_cue("wind")
 
 func _input(event:InputEvent)->void:
-	if stage!="drive" or catch_left<=0: return
+	if stage!="drive" or not rope_grip.available(load_offset.y/RAIL.y,speed,catch_left,brace_time):return
 	if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_LEFT and event.pressed:
+		rope_grip.take()
 		slip_caught=true
 		brace_time=BRACE_DURATION
 		catch_left=0
@@ -796,6 +867,7 @@ func office_action(id:int)->void:
 		office.hide();board.hide()
 		if freight_route==1:
 			pos=WIND_DOCK-Vector2(2.5,0);heading=PI;camera_yaw=heading;speed=0;altitude=land.ground(pos);update_pose(1.)
+		road_arrival()
 		return
 	if id in [1,2]:
 		if bread_waiting and freight_route==0:freight_route=id;file_postmarks()
@@ -820,6 +892,8 @@ func open_tide_dock(night:=false,commission:=false,from_bell:=false)->void:
 	dock_order=preload("res://lamp_night.gd").new() if night else preload("res://tide_dock.gd").new()
 	dock_order.table_inn=table_inn;dock_order.table_crew=table_crew
 	if night:
+		dock_order.wish_id=next_wish();dock_order.wish_mask=known_jobs;dock_order.quay_welcome=quay_welcome;quay_welcome=""
+		dock_order.wish_accepted.connect(sign_wish)
 		dock_order.bell_boarding=from_bell;dock_order.letter_stage=bell_letter;dock_order.letter_progress.connect(record_bell_letter);dock_order.harbor_bell=bell_done;dock_order.harbor_song=bell_song
 		dock_order.fruit_reserved=spring.night_stock;dock_order.fruit_sold_before=spring.night_sales>0;dock_order.fruit_signed.connect(spring.kiln_signed)
 		dock_order.day_shift.connect(lamp_day_shift)
@@ -842,10 +916,11 @@ func record_bell_letter(next:int)->void:
 	file_postmarks()
 
 func save_lamp(value:int)->void:
+	if value>0:known_jobs|=1<<5
 	if value!=lamp_step+1:return
 	lamp_step=value
 	if value==3:
-		road_quay.show();road_quay.animate(6.)
+		road_quay.show();road_quay.animate(road_quay.END_OF_SHIFT)
 		if not bread_waiting:bread_waiting=true;freight_route=0
 	file_postmarks()
 
@@ -886,7 +961,7 @@ func record_grain_progress(barge:Vector2,helm:Vector2,yaw:float,bumps:int,barge_
 
 func record_grain_delivery(bumps:int)->void:
 	if grain_status!=1:return
-	grain_status=2;grain_bumps=bumps;grain_pay=12+maxi(0,6-2*bumps)+(6 if wind_level>0 else 0)
+	grain_status=2;grain_bumps=bumps;grain_pay=12+(2 if bell_done else 0)+maxi(0,6-2*bumps)+(6 if wind_level>0 else 0)
 	wind_wallet+=grain_pay;meal_stock=1
 	if not bread_waiting:bread_waiting=true;freight_route=0
 	road_quay.grain_received();file_postmarks()
@@ -940,11 +1015,11 @@ func rent_hood()->void:
 	dock_order.set_rented(paid,wind_wallet)
 
 func kiln_fare()->int:
-	return 8+(2 if market_open else 0)+(2 if lamp_worker_home and hearth_moved else 0)
+	return 8+(2 if bell_done else 0)+(2 if market_open else 0)+(2 if lamp_worker_home and hearth_moved else 0)
 
 func record_basket()->void:
 	if not bread_waiting or freight_route!=2 or not night_selected or zephyr_selected:return
-	bread_waiting=false;freight_route=0;bread_shipments+=1;wind_wallet+=8
+	bread_waiting=false;freight_route=0;bread_shipments+=1;wind_wallet+=8+(2 if bell_done else 0)
 	if lamp_worker_home and hearth_moved:lamp_supper_bonus+=2;wind_wallet+=2
 	if market_open:market_bonus+=2;wind_wallet+=2
 	file_postmarks()
@@ -960,12 +1035,29 @@ func record_westwind(level:int,pay:int,charge:int,route:String)->void:
 	file_postmarks()
 
 func enter_harbour_job()->void:
+	dock_order.set_meta("arrival_history",arrival_history)
 	get_parent().add_child(dock_order)
-	dock_order.left_dock.connect(return_from_tide_dock)
+	dock_order.left_dock.connect(leave_current_job)
 	title.get_parent().hide()
 	hide()
 	audio.bg.stream_paused=true
 	process_mode=Node.PROCESS_MODE_DISABLED
+	if dock_order.has_method("winch_wind"):ArrivalFilm.mill(dock_order)
+	elif dock_order.has_method("depart_blue_quay"):ArrivalFilm.night(dock_order)
+	elif dock_order.has_method("start_voyage"):ArrivalFilm.dock(dock_order)
+
+func leave_current_job(pay:int)->void:
+	var was_bell:=bell_selected
+	var was_manifest:=return_to_wishes
+	var was_harbour:=night_selected
+	var newly_lit:=not was_harbour and not zephyr_selected and not was_bell and not north_beacon and pay>0
+	return_from_tide_dock(pay)
+	if was_bell:return
+	if was_manifest:
+		return_to_wishes=false
+		quay_welcome="守塔人：看北岬！你送来的镜片，今晚第一次照到了港里。" if newly_lit else ""
+		call_deferred("open_tide_dock",true,true,true)
+	elif was_harbour or not knows(0):call_deferred("open_board")
 
 func return_from_tide_dock(pay:int)->void:
 	if pay>0 and not zephyr_selected:
@@ -1041,9 +1133,9 @@ func _unhandled_key_input(event:InputEvent)->void:
 			KEY_ESCAPE,KEY_P:office_action(3)
 		get_viewport().set_input_as_handled();return
 	if board.visible:
-		if event.keycode in [KEY_ENTER,KEY_KP_ENTER] and board.continuation.visible:
-			book_select(8);get_viewport().set_input_as_handled();return
 		match event.keycode:
+			KEY_ENTER,KEY_KP_ENTER:book_select(board.current)
+			KEY_ESCAPE,KEY_P:close_book()
 			KEY_B:book_select(7)
 			KEY_G:book_select(6)
 			KEY_L:book_select(5)
@@ -1051,17 +1143,14 @@ func _unhandled_key_input(event:InputEvent)->void:
 			KEY_V:book_select(3)
 			KEY_N:book_select(1)
 			KEY_M:book_select(2)
-			KEY_E:book_select(0);interact()
-			KEY_ESCAPE,KEY_P,KEY_ENTER:book_select(0)
-			KEY_W,KEY_A,KEY_S,KEY_D,KEY_UP,KEY_DOWN,KEY_LEFT,KEY_RIGHT:board.hide()
-			_:return
+			KEY_E:book_select(0)
 		get_viewport().set_input_as_handled();return
 	match event.keycode:
-		KEY_L:office_action(6)
-		KEY_V:open_westwind()
 		KEY_P:open_board()
-		KEY_N: open_tide_dock()
-		KEY_M: open_tide_dock(true)
+		KEY_L,KEY_V,KEY_N,KEY_M:
+			if stage in ["pickup","signed"] and not is_instance_valid(porter):
+				var shortcut:int={KEY_L:5,KEY_V:3,KEY_N:1,KEY_M:2}[event.keycode]
+				book_select(shortcut)
 		KEY_E: interact()
 		KEY_B:
 			if stage=="signed" and not returning:
@@ -1102,11 +1191,11 @@ func drive(dt:float,throttle:float,steer:float)->void:
 	var bank:=land.ground(pos+side*0.5)-land.ground(pos-side*0.5)
 	var old:=speed
 	var prev_yaw:=heading
-	var top:=9.8 if throttle>=0 else 3.8
-	var accel:=10.0 if throttle*speed<0 else (5.0 if throttle!=0 else 3.8)
-	speed=move_toward(speed,throttle*top*clampf(1-incline,0.52,1.15),dt*accel)
-	var yaw:=heading-steer*clampf(speed/3.4,-1,1)*dt*(1.25 if not airborne else 0.46)
-	var motion:=Vector2(cos(yaw),-sin(yaw))*speed*dt
+	var loose:=smoothstep(2.8,6.2,absf(pos.y-land.path_z(pos.x)))
+	speed=chassis.accelerate(dt,speed,throttle,9.8,3.8,incline,loose)
+	var yaw:=heading-chassis.steer(dt,steer,speed)*dt*(1.25 if not airborne else .46)
+	var motion:=chassis.roll(dt,Vector2(cos(yaw),-sin(yaw)),speed,loose,airborne)*dt
+	var before:=pos
 	if spring.active and absf(speed)>5.:
 		motion+=side*steer*spring.shower.wetness*clampf((absf(speed)-5.)*.21,0.,.95)*dt
 	if clear_for(pos+motion,yaw):
@@ -1118,7 +1207,7 @@ func drive(dt:float,throttle:float,steer:float)->void:
 			if stage=="drive": warn_damage("撞上障碍",absf(speed)*(0.95+0.065*absf(speed)))
 			lean_v+=1.8
 			audio.play_cue("bonk")
-		speed=0
+		speed=0;chassis.reset()
 	var floor_y:=land.ground(pos)
 	if airborne:
 		vy-=13.0*dt
@@ -1131,7 +1220,7 @@ func drive(dt:float,throttle:float,steer:float)->void:
 				lean_v+=minf(2.8,absf(vy)*0.18)
 			audio.play_cue("land")
 	else: altitude=floor_y
-	pitch=lerpf(pitch,clampf(atan(incline),-0.45,0.45),minf(1,dt*8))
+	pitch=lerpf(pitch,clampf(atan(incline)+chassis.pitch,-0.45,0.45),minf(1,dt*8))
 	roll=lerpf(roll,clampf(-atan(bank)-steer*speed*0.012,-0.5,0.5),minf(1,dt*8))
 	var force:=-bank*10.0-steer*speed*absf(speed)*0.12
 	lean_v+=(force-32*lean-5.0*lean_v)*dt
@@ -1172,8 +1261,10 @@ func drive(dt:float,throttle:float,steer:float)->void:
 			gate_passed=true
 			audio.play_cue("win")
 		freight.position=Vector3(-0.9+load_offset.x,1.10,load_offset.y)
+		if rope_grip.tick(load_offset.y/RAIL.y,speed,catch_left,brace_time,before.distance_to(pos)):audio.play_cue("buckle")
 		freight.rotation.x=-lean*0.48
 		freight.rotation.z=lerpf(freight.rotation.z,clampf((speed-old)*0.24,-0.12,0.12),minf(1,dt*10))
+	wheel_traces.update(dt,before.distance_to(pos),2 if loose>.5 else (1 if chassis.slip>.68 else 0))
 	for wheel in get_tree().get_nodes_in_group("wheels"): wheel.rotation.z-=speed*dt*1.3
 
 func warn_damage(reason:String,loss:float)->void:
@@ -1213,7 +1304,7 @@ func track_slip(force:float,grip:float,dt:float)->void:
 	if Catch.reaches_rail(remaining,absf(v),outward_accel,.38):
 		slip_side=side
 		catch_left=CATCH_WINDOW
-		audio.play_cue("buckle")
+
 
 func rail_impact(impact:float)->void:
 	if impact<=1.05: return
@@ -1251,7 +1342,8 @@ func slide_load(accel:Vector2,dt:float)->void:
 
 func load_state()->String:
 	if impact_time>0: return last_warning+" −%d" % rail_loss
-	if catch_left>0 or brace_time>0: return Catch.instruction(catch_left,brace_time)
+	var hand:=rope_grip.hint(load_offset.y/RAIL.y,speed,catch_left,brace_time)
+	if hand!="":return hand
 	if pos.x>81 and pos.x<113 and pos.y>1 and absf(speed)>4: return "横风 · 向背风侧收线"
 	if absf(speed)>5.4 and pos.x>146 and pos.x<160 and pos.y>5.5:
 		return "石堤颠簸 · 松油"
@@ -1318,7 +1410,8 @@ func update_ui()->void:
 	var zone:="酒庄" if pos.x<7 else ("葡萄园" if pos.x<42 else ("岬角山道" if pos.x<145 else ("西湾石桥" if pos.x<161 else "神庙集市")))
 	title.text="灯塔末班   /   "+zone if wind_job else ("月桂归客" if returning else "西湾酒单")+"   /   "+zone
 	controls.text="WASD 搬运工移动    E 抬起 / 放下 / 交接    Q 转货    Tab 回车调整停车" if is_instance_valid(porter) else "W 加速    S 刹车 / 倒车    A D 转向    空格 跳 / 空中借风    E 下车交接    R 重试"
-	day_button.visible=stage in ["pickup","signed"];night_button.visible=day_button.visible;book_button.visible=day_button.visible and not is_instance_valid(porter)
+	day_button.hide();night_button.hide()
+	book_button.visible=stage in ["pickup","signed"] and not is_instance_valid(porter)
 	day_button.text="N　潮汐船坞"+("　%d 枚"%dock_earnings if dock_earnings>0 else "　日班")
 	night_button.text="M　冥河渡客"+("　%d 枚"%night_earnings if night_earnings>0 else "　夜班")
 	if stage=="drive": controls.text="W / S 油门与刹车    A / D 转向    空格 跳    绑带绷紧时点左键    E 交接"
@@ -1335,7 +1428,7 @@ func update_ui()->void:
 	match stage:
 		"pickup","drive":
 			var at:=target()
-			var place:="酒庄取货" if stage=="pickup" else ("侧院交酒" if at==Map.SIDE else "正阶交酒")
+			var place:="神庙等着上酒，先去酒庄接货" if stage=="pickup" else ("侧院交酒" if at==Map.SIDE else "正阶交酒")
 			if returning: place="集市取榻" if stage=="pickup" else "月桂客舍"
 			if wind_job: place="客舍取风" if stage=="pickup" else "西风灯塔"
 			info.text=place+" · "+bearing_hint(at) if stage=="pickup" or rear().distance_to(at)<24 else ("回程到月桂客舍，途中可在静风亭歇脚" if returning else "送往红顶神庙 · 正阶或侧院签收")
@@ -1343,7 +1436,7 @@ func update_ui()->void:
 			if stage=="drive":
 				state=load_state()
 				var bend:=road_hint()
-				if not bend.is_empty(): info.text=bend
+				if not bend.is_empty(): info.text+="　·　"+bend
 			if wind_job and gate_passed and state=="": state="乘风赏金 +22"
 			if in_reach(at):
 				var action:="E 下车搬货" if stage=="pickup" else "E 挂钩卸货"
@@ -1368,7 +1461,7 @@ func update_ui()->void:
 		tag.follow(cam,freight.global_position+Vector3.UP*1.5,condition_name()+" · "+condition_grade(),health,state,impact_time>0 or catch_left>0,worker_rect)
 
 func _physics_process(dt:float)->void:
-	if office.visible:return
+	if office.visible or board.visible:return
 	clock+=dt
 	traffic.tick(self,dt)
 	impact_time=maxf(0,impact_time-dt)

@@ -4,7 +4,7 @@ var art:=preload("res://workshop.gd").new()
 var sail:MeshInstance3D
 var sign:Node3D
 
-func build(parent:Node3D)->void:
+func build(parent:Node3D,trade_color:=Color.TRANSPARENT)->void:
 	var hull:=SurfaceTool.new();hull.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in 24:
 		for j in 12:
@@ -35,6 +35,8 @@ func build(parent:Node3D)->void:
 				if j in [2,4]:color=Color("#f3cf9d")
 				elif j>=9:color=Color("#943e33")
 				elif i%4==0:color=Color("#b7513e")
+				if trade_color.a>0.:
+					color=trade_color.lightened(.19) if i in [4,9] else trade_color.darkened(.09 if j>=9 else 0.)
 				cloth.set_color(color);cloth.add_vertex(vertex)
 	cloth.generate_normals();sail=MeshInstance3D.new();sail.mesh=cloth.commit();sail.material_override=m;parent.add_child(sail)
 	sign=art.group(parent,Vector3(1.8,.50,0))

@@ -10,7 +10,7 @@ var art:=Art.new()
 
 # The harbor's herm faces the water with a hand cupped around one ear.
 # A single stepped plinth and the leaning bronze shell form its silhouette at sea.
-func build(parent:Node3D,at:Vector3,yaw:float,factor:float)->Node3D:
+func build(parent:Node3D,at:Vector3,yaw:float,factor:float,inlay:Material=null)->Node3D:
 	var monument:=art.group(parent,at);monument.rotation.y=yaw;monument.scale=Vector3.ONE*factor
 	art.box(monument,Vector3.UP*.16,Vector3(2.30,.32,1.95),WARM)
 	art.box(monument,Vector3.UP*.43,Vector3(1.98,.24,1.67),LIMESTONE)
@@ -40,12 +40,14 @@ func build(parent:Node3D,at:Vector3,yaw:float,factor:float)->Node3D:
 	# Shell opening and a spiral remain legible when backlit.
 	var shell:=art.group(head,Vector3(-.43,.43,.11));shell.rotation=Vector3(.18,-.58,.22)
 	var rim:=art.ring(shell,Vector3.ZERO,.27,.067,COOL);rim.rotation.x=PI/2;rim.scale.y=1.32
+	if inlay:rim.material_override=inlay
 	for i in 11:
 		var u:=i/11.;var v:=(i+1)/11.
 		var a:=u*TAU*1.19;var b:=v*TAU*1.19
 		var from:=Vector3(cos(a)*(.22-.18*u),sin(a)*(.27-.22*u),.03+.06*u)
 		var to:=Vector3(cos(b)*(.22-.18*v),sin(b)*(.27-.22*v),.03+.06*v)
-		art.beam(shell,from,to,.032,GOLD)
+		var coil:=art.beam(shell,from,to,.032,GOLD)
+		if inlay:coil.material_override=inlay
 	art.beam(torso,Vector3(-.58,1.36,0),Vector3(-.88,1.10,.30),.162,LIMESTONE)
 	art.beam(torso,Vector3(-.88,1.10,.30),Vector3(-.67,1.94,.27),.129,WARM)
 	var palm:=art.ball(torso,Vector3(-.62,1.99,.29),Vector3(.21,.285,.125),LIMESTONE);palm.rotation.z=-.33

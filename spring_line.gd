@@ -305,7 +305,7 @@ func tick(dt:float)->void:
 		var shaded:bool=g.pos.y>17.
 		heat=clampf(heat+distance*(-.035 if shower.wetness>.28 else (-.028 if shaded else .019)),0.,1.)
 		if heat>=1. and intact>0:
-			heat=.33;intact-=1;board_note="热风晒软一筐 · 沿海湾阴道可降温";note_time=3.;refresh();stamp()
+			heat=.33;intact-=1;board_note="热风晒软一筐 · 走海湾背阴的小路能给果子降温";note_time=3.;refresh();stamp()
 	if transfer>0.:
 		transfer=maxf(0.,transfer-dt)
 		var u:=1.-transfer/1.6
@@ -329,7 +329,7 @@ func tick(dt:float)->void:
 	g.title.text="泉神的旱季　/　西湾引水"
 	var target:Vector2=g.WIND_DOCK if step==0 else (HEAD if step<=2 else GARDEN)
 	var dist:=roundi(g.pos.distance_to(target))
-	g.info.text=["蓝棚码头 · 领取青铜轮毂","送到山道上的高架水轮","给主渠通水","赶去月桂园放水","月桂园重新开泉 · 公共运费 24 枚"][step]+"　%d 米"%dist
+	g.info.text=["月桂园断水了。去蓝棚接渠匠的轮毂。","送到山道上的高架水轮","给主渠通水","赶去月桂园放水","月桂园重新开泉 · 公共运费 24 枚"][step]+"　%d 米"%dist
 	g.controls.text="W/S 驾车　 A/D 转向　 E 停稳作业　 Tab 引水图　 Esc 暂离"
 	g.port_caption.show()
 	if testing:
@@ -337,7 +337,8 @@ func tick(dt:float)->void:
 		var focus:=wheel.global_position
 		g.cam.position=focus+Vector3(2.5,3.5,-8.2);g.cam.look_at(focus)
 	else:
-		g.port_caption.text=["E 接走轮毂","E 安装青铜轮毂","E 接手闸轮","E 打开园闸","E 返回委托簿"][step] if dist<=6 else ("向西过河，循陶画找渠首连拱" if step<3 else "沿路向西，寻找月桂园石泉")
+		g.port_caption.text=["E 接走轮毂","E 安装青铜轮毂","E 接手闸轮","E 打开园闸","E 返回委托簿"][step] if dist<=6 else ["回蓝棚码头找渠匠","向西过河，循陶画找渠首连拱","回到连拱下的水轮","沿路向西，寻找月桂园石泉",""][step]
+		if dist<=6 and absf(g.speed)>1.6:g.port_caption.text="先把车停稳，再下车作业。"
 
 	if step==4:
 		g.info.text="月桂园果运　·　已送 %d 篮　收入 %d 枚"%[baskets,income]
@@ -345,7 +346,7 @@ func tick(dt:float)->void:
 			var port_dist:=roundi(g.pos.distance_to(g.WIND_DOCK))
 			var inn_dist:=roundi(g.pos.distance_to(g.Map.LODGE))
 			g.port_caption.text="客舍 %d 米 · 近途　　海港 %d 米 · 高价，升桥已落下"%[inn_dist,port_dist]
-			if mini(port_dist,inn_dist)<6:g.port_caption.text="E 卸下鲜果　·　完好果筐 %d / 6"%intact
+			if minf(g.pos.distance_to(g.WIND_DOCK),g.pos.distance_to(g.Map.LODGE))<6.:g.port_caption.text="E 卸下鲜果　·　完好果筐 %d / 6"%intact if absf(g.speed)<=1.6 else "果摊到了，刹住车再卸货。"
 		else:g.port_caption.text="E 装月桂园鲜果　·　可送客舍或海港" if g.pos.distance_to(GARDEN)<6. else "返回月桂园装下一篮　 Esc 回委托簿"
 		if note_time>0.:g.port_caption.text=board_note
 		if ceremony>0.:
@@ -364,7 +365,7 @@ func tick(dt:float)->void:
 	if note_time>0.:g.port_caption.text=board_note
 	if transfer>0.:g.port_caption.text="渠匠正在把轮毂送上水轴"
 
-	if picked and g.pos.distance_to(GARDEN)<6. and ceremony<=0.:g.port_caption.text="Q 请园工调头　·　客舍在西，果港在东"
+	if picked and g.pos.distance_to(GARDEN)<6. and ceremony<=0. and note_time<=0.:g.port_caption.text="Q 请园工调头　·　客舍在西，果港在东"
 
 	if active and not testing and inspection<=0. and g.pos.distance_to(HEAD)<10. and absf(g.speed)<1.8:
 		var weight:float=1.-smoothstep(4.,10.,g.pos.distance_to(HEAD))
@@ -383,7 +384,7 @@ func tick(dt:float)->void:
 		var blend:=smoothstep(0.,.7,admire)*(1.-smoothstep(2.4,3.1,admire))
 		g.cam.transform=g.cam.transform.interpolate_with(Transform3D(Basis.looking_at(-eye,Vector3.UP),target3+eye),blend)
 
-	if picked and shower.wetness>.3 and note_time<=0. and g.pos.distance_to(cove.WELL)>6.:g.port_caption.text="海雨替果筐降温 · 湿石缓转，出口看红白风袋"
+	if picked and shower.wetness>.3 and note_time<=0. and g.pos.distance_to(cove.WELL)>6. and g.pos.distance_to(GARDEN)>6. and g.pos.distance_to(g.Map.LODGE)>6. and g.pos.distance_to(g.WIND_DOCK)>6.:g.port_caption.text="海雨替果筐降温 · 湿石缓转，出口看红白风袋"
 
 	if active and not picked and night_stock and g.pos.distance_to(g.WIND_DOCK)<6. and note_time<=0.:
 		g.port_caption.text="Q 随夜船把窑工订的果箱送去双灯窑　·　捎货 +6 枚"

@@ -45,7 +45,7 @@ func _draw()->void:
 		line(Vector2(74,356),"铸钟山       "+("学徒听见信号，第二篮已落地" if state.blessing else "学徒还在等第二篮的信号"),17,ink)
 		draw_line(Vector2(72,377),Vector2(447,377),gold,1.)
 		line(Vector2(74,419),"本单运费",20,ink,true);line(Vector2(290,422),("已入账" if state.previously_paid else "%d 枚"%state.fare(state.hp,state.learned,state.rigging_repaired)),27,teal,true)
-		line(Vector2(74,457),"永久货毡可减轻后续酒单的货损。",16,ink)
+		line(Vector2(74,457),"港口赠你一处货栈。运粮或送面包到窑口，每单分红 2 枚。",13,ink)
 		return
 	var header_w:=436. if state.stage=="drive" else 395.
 	screen_strip(Rect2(28,22,header_w,81));seal(Vector2(64,62),24.,Color("#e6cd8b"))

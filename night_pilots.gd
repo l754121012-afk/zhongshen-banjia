@@ -13,10 +13,7 @@ var wave:=-1.
 var starts:Array[float]=[]
 var answered:=false
 var reply:=AudioStreamPlayer3D.new()
-var walker:Node3D
 var reflector:Node3D
-var hand_lamp:Node3D
-var shift:=0.
 var base_fog:=0.
 var clock:=0.
 
@@ -45,11 +42,6 @@ func build(quay:Node3D,environment:Environment)->void:
 		circles.append(water_ring);echo_colors.append(ink)
 	add_child(reply);reply.position=quay.position+Vector3.UP*2.
 	reply.stream=preload("res://audio/bronze_reply.wav");reply.unit_size=18.;reply.max_distance=95.
-	walker=craft.courier(quay);walker.position=Vector3(.71,.29,1.54)
-	preload("res://zephyr_people.gd").new().costume(walker,"miller")
-	hand_lamp=quay.lantern(walker.get_node("ArmR"),Vector3(0,-.60,.10));hand_lamp.scale=Vector3.ONE*.42
-	var wick:=craft.ball(hand_lamp,Vector3.UP*.80,Vector3(.64,.45,.64),"#ffbe66")
-	var flame:=StandardMaterial3D.new();flame.albedo_color=Color("#ffcc72");flame.emission_enabled=true;flame.emission=Color("#fac470");flame.emission_energy_multiplier=1.38;wick.material_override=flame
 
 func call_from(p:Vector2)->void:
 	wave=0.;answered=false;starts.clear()
@@ -79,14 +71,6 @@ func tick(dt:float,p:Vector2,works:int,environment:Environment)->void:
 			echo_colors[i].albedo_color=Color(.96,.81,.55,(1.-u)*.84)
 		brass_fins[i].rotation.y=.32*sin(clock*1.42+i)
 		brightness[i]=light
-	if works==3:shift=minf(1.,shift+dt*.40)
-	walker.position=Vector3(.71,.29,1.54).lerp(Vector3(1.26,.65,2.87),smoothstep(0.,1.,shift))
-	walker.rotation.y=.2+shift*.94
-	walker.get_node("LegL").rotation.x=sin(shift*TAU*3.)*.38
-	walker.get_node("LegR").rotation.x=-walker.get_node("LegL").rotation.x
-	walker.get_node("ArmR").rotation.x=lerpf(-1.31,-.18,shift)+.08*sin(clock*1.7)*(1.-shift)
-	hand_lamp.visible=shift<.82
-
 
 func swing_bell(bell:Node3D,dt:float)->void:
 	if not is_instance_valid(bell):return

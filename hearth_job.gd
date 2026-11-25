@@ -3,6 +3,7 @@ const COAL:=Vector2(66,15)
 var iron:=preload("res://hearth_art.gd").new()
 var stove:Node3D
 var used_coal:=false
+var coal_pile:Node3D
 var sparks:Array[Node3D]=[]
 var dock_front:Node3D
 var oven_time:=0.
@@ -36,7 +37,8 @@ func _ready()->void:
 	land.label(dock_front,Vector3(-4,4.85,0),"潮汐船坞 · 蓝棚灶台",.014)
 	var shed:=art.group(land,land.surface(COAL)+Vector3(0,0,2.7))
 	c.cloth(shed,Vector3.UP*2.5,3.4,Art.WOOD)
-	for i in 8:art.ball(shed,Vector3(i%3*.33,.24+i/3*.20,0),Vector3(.58,.49,.63),"#4c4b46",true)
+	coal_pile=art.group(shed)
+	for i in 8:art.ball(coal_pile,Vector3(i%3*.33,.24+i/3*.20,0),Vector3(.58,.49,.63),"#4c4b46",true)
 	land.label(shed,Vector3.UP*2.95,"歪烟囱炭棚 · 停稳 E 添炭",.011)
 	art.cyl(shed,Vector3(1.45,2.36,0),.28,.21,4.7,Art.WOOD).rotation.z=.16
 	for i in 9:sparks.append(art.ball(freight,Vector3.ZERO,Vector3.ONE*.06,"#f8b04a",true))
@@ -83,8 +85,10 @@ func begin_load()->void:
 func do_use()->void:
 	if stage=="drive" and pos.distance_to(Terrain.MILL_PORT)>=6.8 and pos.distance_to(COAL)>=5.8:
 		tell("伊娅：「海边的炭棚还有一筐炭，蓝棚下就是新家。」",2.5);return
+	if stage=="drive" and pos.distance_to(COAL)<5.8 and absf(speed)>=2.:
+		tell("炭棚就在车旁，先刹住车再添炭。");return
 	if stage=="drive" and pos.distance_to(COAL)<5.8 and absf(speed)<2:
-		if not used_coal:charge=minf(100,charge+46);used_coal=true;audio.play_cue("load");tell("炭筐已空 · 炉心重新亮起",2.4)
+		if not used_coal:charge=minf(100,charge+46);used_coal=true;coal_pile.hide();audio.play_cue("load");tell("炭添进去了。看，炉膛又亮起来了。",2.4)
 		else:tell("炭棚的筐已经空了")
 		return
 	super()
@@ -106,7 +110,7 @@ func update_cargo(_dt:float)->void:
 		sparks[i].visible=stage=="drive" and charge>15 and Wind.pressure(pos,time)>.26
 		sparks[i].position=Vector3(-.48+u*.49,.70+u*.77,u*1.36+sin(i)*.12);sparks[i].scale=Vector3.ONE*.055*(1-u)
 func retry_from_bank()->void:
-	super();charge=94;used_coal=false;advance_rang=false;cab_bell.hide();tell("伊娅把备用炉装上了车")
+	super();charge=94;used_coal=false;coal_pile.show();advance_rang=false;cab_bell.hide();tell("伊娅把备用炉装上了车")
 func damage_fee()->int:
 	if health<60:return 34
 	return 15 if health<90 else 0
@@ -147,7 +151,13 @@ func update_ui()->void:
 	title.text="搬走最后一座灶火　/　"+("潮汐船坞" if pos.x>85 else "西湾海岸")
 	objective.text="把伊娅的炉子送到船坞 · 火候达到 55 可立即开炉"
 	guide.text={"offer":"E 接委托　 Q 问伊娅　 Esc 返港","load":"WASD 搬运　 Q 转铁把　 E 装车","drive":"W S 驾驶　 A D 转向　 E 停车交接或添炭","crane":"A D 移吊车　 空格 脱钩","broken":"R 重运　 Esc 回港"}.get(stage,"")
-	if stage=="offer":action.text="E 接下搬炉委托";seal.hide()
+	if stage=="offer":
+		objective.hide()
+		action.text=notify_text if notify_time>0. else "伊娅：船坞的晚班要开工了。他们还没吃上热面包。"
+		action.reset_size();action.position.x=(1280-action.size.x)*.5;action.show();seal.hide()
+		guide.text="E 帮伊娅搬炉子　 Q 问问炉火　 Esc 返港"
+	if stage=="crane":objective.text="蓝棚下就是新灶台。等炉底对准软垫，再松钩。"
+	if stage=="signed":guide.text="E　回港查看经营簿"
 	if stage=="strap":action.text="系紧炉身";action.show()
 	if stage=="awaken":objective.text="伊娅揭开新家的炉门"
 	if stage=="drive" and notify_text.contains("风"): 
@@ -160,4 +170,4 @@ func update_ui()->void:
 	if bag_tag.visible:
 		bag_tag.text="炉火 %d　·　%s"%[floori(charge),"金焰" if charge>=55 else ("红炭" if charge>15 else "暗炭")]
 		if health<90:bag_tag.text+="　炉身 %d%%"%floori(health)
-		if stage=="drive" and (catch_window>0 or correction>0):bag_tag.text+="　"+Catch.instruction(catch_window,correction)
+		if stage=="drive":bag_tag.text+="　"+rope_grip.hint(cargo_shift/.68,speed,catch_window,correction)

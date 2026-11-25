@@ -35,11 +35,15 @@ var impact:=0.0
 var alignment:=0.0
 var hint:="吊索起货"
 
-func begin(game,destination:Vector2)->void:
+var raised_pad:=false
+
+func begin(game,destination:Vector2,pad_elevation:float=-INF)->void:
 	bay=game
 	bay.freight.reparent(bay,true)
 	start=bay.freight.global_position
 	pad=bay.land.surface(destination)+Vector3.UP*0.16
+	raised_pad=is_finite(pad_elevation)
+	if raised_pad:pad.y=pad_elevation
 	var span:=Vector3(pad.x-start.x,0,pad.z-start.z)
 	length=span.length()
 	axis=span.normalized() if length>0.01 else Vector3.RIGHT
@@ -99,6 +103,8 @@ func tick(dt:float,steer:float)->bool:
 		fall_velocity.y-=9.8*dt
 		var p:Vector3=bay.freight.global_position+fall_velocity*dt
 		var floor_y:float=bay.land.ground(Vector2(p.x,p.z))+0.16
+		if raised_pad and Vector2(p.x-pad.x,p.z-pad.z).length()<=1.22:
+			floor_y=pad.y
 		if p.y<=floor_y:
 			p.y=floor_y
 			update_geometry(p)

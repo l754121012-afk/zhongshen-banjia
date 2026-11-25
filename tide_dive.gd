@@ -264,7 +264,7 @@ func _physics_process(dt:float)->void:
 	if air<=0:
 		rescue=true;rescue_time=0;announce("氧气耗尽 · 绞盘回收，救援费 6 枚",1.3);cue("warn")
 	settle(dt)
-	var instruction:="寻找左下方青铜齿轮"
+	var instruction:="潮印锁在水门后。左下方有只齿轮，能装回绞盘。"
 	if pocket=="key":instruction="携齿轮抵达底部绞盘 · E 安装"
 	elif gate_open:instruction="穿过抬起的水门，取出潮印" if pocket=="" else "潮印已回收 · 回左侧潜水钟"
 	task.text=instruction

@@ -4,6 +4,7 @@ signal left_dock(pay:int)
 signal rent_requested
 signal order_signed(result:int,pay:int,remaining:int,route:String)
 const Catch:=preload("res://cargo_catch.gd")
+var rope_grip:=Catch.new()
 const Art=preload("res://workshop.gd")
 const Bay=preload("res://tide_art.gd")
 const Terrain=preload("res://zephyr_land.gd")
@@ -61,6 +62,7 @@ var rented:=false
 var stage:="offer"
 var pos:=Terrain.BANK
 var heading:=0.0
+var chassis:=preload("res://road_chassis.gd").new()
 var speed:=0.0
 var altitude:=0.0
 var vy:=0.0
@@ -240,7 +242,7 @@ func forward_dir()->Vector2:return Vector2(cos(heading),-sin(heading))
 func set_rented(accepted:bool,available:int)->void:
 	wallet=available
 	if not accepted:tell("导风罩租金 12 枚 · 普通风囊也可接单");audio.play_cue("warn");return
-	rented=true;hood.show();tell("已装导风罩 · 斜着驶过风口也能采风");audio.play_cue("buckle")
+	rented=true;hood.show();tell("已装导风罩 · 斜着驶过风口也能采风")
 func begin_load()->void:
 	visit_archive=false
 	land.apply_result(0,true)
@@ -283,8 +285,8 @@ func jump()->void:
 	tell("借西风　−40　·　树叶翻银",1.2)
 func _input(e:InputEvent)->void:
 	if chart.visible or stage!="drive" or not e is InputEventMouseButton:return
-	if e.button_index==MOUSE_BUTTON_LEFT and e.pressed and catch_window>0:
-		correction=Catch.DURATION;catch_window=0.;audio.play_cue("grab")
+	if e.button_index==MOUSE_BUTTON_LEFT and e.pressed and rope_grip.available(cargo_shift/.68,speed,catch_window,correction):
+		rope_grip.take();correction=Catch.DURATION;catch_window=0.;audio.play_cue("grab")
 func _unhandled_key_input(e:InputEvent)->void:
 	if not e is InputEventKey or not e.pressed or e.echo:return
 	if chart.visible:
@@ -368,13 +370,12 @@ func drive(dt:float,gas:float,turn:float)->void:
 	var top:float=[12.1,10.75,9.9,12.1][surface_id]
 	var gradient:=land.ground_for_wheels(pos+forward_dir()*.9,altitude)-land.ground_for_wheels(pos-forward_dir()*.9,altitude)
 	if not airborne and surface_id!=3:top-=clampf(gradient*.56,-.8,.95)
-	var target:=gas*(top if gas>0 else 4.2)
-	speed=move_toward(speed,target,dt*(9.4 if speed*gas<0 else (4.7 if gas!=0 else 2.2))*(.43 if airborne else 1.0))
-	var steering:=clampf(absf(speed)*.41,0,1)*signf(speed)
-	heading=wrapf(heading-turn*dt*(1.20 if not airborne else .65)*steering,-PI,PI)
+	var loose:=1. if surface_id==2 else (.42 if surface_id==1 else 0.)
+	speed=chassis.accelerate(dt,speed,gas,top,4.2,0. if airborne else gradient*.32,loose)
+	heading=wrapf(heading-chassis.steer(dt,turn,speed)*dt*(1.20 if not airborne else .65),-PI,PI)
 	var gust:=Wind.pressure(pos,time)
 	var exposed:=1.-smoothstep(10,20,-pos.y)
-	var move:=forward_dir()*speed*dt+Wind.FLOW*(gust*exposed*minf(absf(speed)*.022,.22)*dt)
+	var move:=chassis.roll(dt,forward_dir(),speed,loose,airborne)*dt+Wind.FLOW*(gust*exposed*minf(absf(speed)*.022,.22)*dt)
 	var next:=pos+move
 	if clear(next):pos=next
 	else:
@@ -416,7 +417,7 @@ func drive(dt:float,gas:float,turn:float)->void:
 	if absf(slide)<.15 or signf(slide)!=slide_side:
 		slide_side=0.
 	if slide_side==0 and absf(speed)>.5 and Catch.reaches_rail(.68-cargo_shift*signf(slide),absf(slide),0.,.11):
-		slide_side=signf(slide);catch_window=Catch.WINDOW;audio.play_cue("buckle")
+		slide_side=signf(slide);catch_window=Catch.WINDOW
 	cargo_shift=clampf(cargo_shift-turn*speed*absf(speed)*dt*.0030+gust*exposed*absf(speed)*.0028*dt,-.68,.68)
 	if correction>0:
 		cargo_shift=move_toward(cargo_shift,0,Catch.grip_step(minf(correction,dt)))
@@ -424,6 +425,7 @@ func drive(dt:float,gas:float,turn:float)->void:
 	if absf(cargo_shift)>.666 and absf(speed)>7 and not rail_contact:
 		rail_contact=true;hurt(2.4,"风囊碰上车帮")
 	if absf(cargo_shift)<.48:rail_contact=false
+	if rope_grip.tick(cargo_shift/.68,speed,catch_window,correction,travelled):audio.play_cue("buckle")
 	update_truck(dt,turn);tracks.update(dt,travelled,surface_id)
 func update_truck(dt:float,turn:float)->void:
 	var dir:=forward_dir()
@@ -432,7 +434,7 @@ func update_truck(dt:float,turn:float)->void:
 	var side:=dir.orthogonal()
 	var slope:=clampf(atan2(fore-aft,1.32),-.35,.35)
 	var bank:=clampf(atan2(land.ground_for_wheels(pos+side*.6,altitude)-land.ground_for_wheels(pos-side*.6,altitude),1.2),-.21,.21)
-	pitch=lerpf(pitch,clampf(vy*.043,-.22,.25) if airborne else slope,1.-exp(-dt*5.7))
+	pitch=lerpf(pitch,clampf(vy*.043,-.22,.25) if airborne else slope+chassis.pitch,1.-exp(-dt*5.7))
 	roll=lerpf(roll,-bank-turn*speed*.006,1.-exp(-dt*6))
 	var vibration:float=(.020*sin(route_meters*7.76) if surface_id==3 else (.024*sin(route_meters*3.25) if surface_id==2 else .0))
 	if airborne:vibration=0.
@@ -547,6 +549,9 @@ func draw_camera(dt:float)->void:
 			var at:Vector3=freight.global_position if porter==null else porter.follow_anchor
 			look=truck.position.lerp(at,.72)+Vector3.UP*.82
 			offset=Vector3(5.5,8.5,9.9)
+			if stage=="offer":
+				look=land.apprentice.global_position.lerp(freight.global_position,.42)+Vector3.UP*.95
+				offset=Vector3(3.9,2.6,5.4)
 		"crane":
 			var mid:Vector3=crane.start.lerp(crane.pad,.57)
 			look=mid.lerp(freight.global_position,.30)+Vector3.UP*.75
@@ -579,14 +584,14 @@ func update_ui()->void:
 	var keys:="E 接下委托　 B 租导风罩 12 枚　 Q 听米拉说　 Esc 返港"
 	match stage:
 		"offer":
-			intent="米拉的麦子还在吊钩下 · 留足 80 点风，蓝窗面包房就能开炉"
+			intent="米拉：瞧，麦袋还吊在半空。帮我把这袋风送到磨坊吧。"
 			if prior_level>0:keys+="　 Tab 回访磨坊";intent="上回 "+previous_receipt
 			local="E 接单搬起风囊"+("　·　导风罩已租" if rented else "")
 		"load","strap":
 			keys="WASD 走位　 E 抬起 / 放下 / 装车　 Q 转货　 Esc 返港";local=porter.prompt() if porter!=null else "系紧风囊"
 		"drive":
 			head="西风过境　/　"+("旧磨沟" if lost_valley and pos.x<82 else ("北坡风车" if pos.x>82 else ("背风石巷" if pos.y< -13 else ("橄榄山脊" if pos.x>0 else "海崖驿道"))))
-			keys="W S 油门 / 刹车　 A D 转向　 空格 跳 · 空中再按借风　 E 交货"
+			keys="W S 油门 / 刹车　 A D 转向　 空格 跳"
 			if pos.x< -31:intent="沿白石路穿橄榄门 · 路旁小祠可取丰收枝"
 			elif pos.x<0:intent="穿门后找青铜风口 · 往山顶大风车走"
 			elif pos.x<23:intent="顺风廊采风 · 留足 80 可开炉"
@@ -614,7 +619,7 @@ func update_ui()->void:
 		bag_tag.text="余风 %d"%wind_units()+("　采风 ↑" if stage=="drive" and current_gain>2 else ("　可开炉" if charge>=80 and stage=="drive" else ""))
 		if blessing:bag_tag.text+="　✦"
 		if health<90:bag_tag.text+="　囊体 %d%%"%floori(health)
-		if stage=="drive" and (catch_window>0 or correction>0):bag_tag.text+="　"+Catch.instruction(catch_window,correction)
+		if stage=="drive":bag_tag.text+="　"+rope_grip.hint(cargo_shift/.68,speed,catch_window,correction)
 		var pt:=freight.global_position+Vector3.UP*1.65
 		bag_tag.reset_size();bag_tag.position=(cam.unproject_position(pt)+Vector2(16,-18)).clamp(Vector2(14,112),Vector2(1255-bag_tag.size.x,560))
 	balance.visible=stage=="drive" and Catch.show_balance(cargo_shift/.68,catch_window,correction)

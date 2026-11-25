@@ -24,6 +24,9 @@ var take_ferry:=false
 var coast:=preload("res://bell_coast.gd").new()
 var blessing:=false
 var fog_reach:=-999.
+var fog_origin:=-999.
+var fog_path:=Vector2.ZERO
+var mist_wait:=0.
 var rotation_walk:=0.
 var wheels:Array[Node3D]=[]
 var art:=preload("res://workshop.gd").new()
@@ -43,6 +46,8 @@ var compatibility:=RenderingServer.get_current_rendering_method()=="gl_compatibi
 var quay_lamps:Array[OmniLight3D]=[]
 var tone:=AudioStreamPlayer.new()
 var reply:=AudioStreamPlayer3D.new()
+var cup_call:=AudioStreamPlayer3D.new()
+var cup_age:=10.
 var tracks:Array[AudioStream]=[]
 var rings:Array[Node3D]=[]
 var stage:="opening"
@@ -61,6 +66,8 @@ var pos:=Vector2(7.35,0)
 var porter:=Vector2(-5.,-4.)
 var yaw:=0.
 var speed:=0.
+var chassis:=preload("res://road_chassis.gd").new()
+var wheel_traces:=preload("res://zephyr_wheels.gd").new()
 var velocity:=Vector2.ZERO
 var steer_rate:=0.
 var swing:=0.
@@ -68,6 +75,7 @@ var swing_v:=0.
 var slip:=0.
 var hit_lock:=0.
 var echo_age:=9.
+var reply_at:=.65
 var echo_goal:=Vector3.ZERO
 var echo_pitch:=1.
 var echo_return:=false
@@ -97,6 +105,7 @@ var cam_started:=false
 var last_region:=-1
 var old_road:=false
 const Catch:=preload("res://cargo_catch.gd")
+var rope_grip:=Catch.new()
 const BELL_RAIL:=.83
 var catch_side:=0
 var catch_left:=0.0
@@ -106,7 +115,15 @@ var catch_hit:=false
 var first_catch_seen:=false
 var cue_strap:Node3D
 var bell_tag:=preload("res://freight_tag.gd").new()
+var girl:Node3D
+var convoy:=preload("res://harbor_convoy.gd").new()
 var lookout_age:=-1.
+var reef_marker:Node3D
+const INVITATION_AT:=27.0
+const ACCEPT_AT:=17.0
+var last_open_press:=-10.
+var cut_index:=-1
+var cinema_bars:=Control.new()
 var lookout_seen:=false
 var pilot_lamp:Node3D
 var port_signal:Node3D
@@ -131,9 +148,11 @@ func _ready()->void:
 	driven_sections.resize(101)
 	add_child(land);land.build();coast.build(land);lift.build(land.stations.yard);lift.echo_bluff(land);encounters.build(self)
 	add_child(audio);audio.set_scene("yard");audio.bg.volume_db=-23.
+	land.cup.add_child(cup_call);cup_call.stream=preload("res://audio/ferryman_cup.wav");cup_call.unit_size=19.;cup_call.max_distance=99.;cup_call.volume_db=-2.
 	add_child(tone);land.add_child(reply);reply.max_distance=190.;reply.unit_size=30.;reply.volume_db=-3
 	for key in ["bronze_reply","ferryman_cup","harbor_horn","pilot_horn","family_bronze"]:tracks.append(load("res://audio/"+key+".wav"))
-	truck=art.truck(self);
+	truck=art.truck(self)
+	wheel_traces.build(self,func():return -yaw,func():return true)
 	for w in truck.find_children("*","Node3D",true,false):
 		if w.is_in_group("wheels"):wheels.append(w)
 	truck.position=land.surface(pos)
@@ -166,7 +185,15 @@ func _ready()->void:
 	for side in [-1.,1.]:art.beam(cue_strap,Vector3(0,1.1,side*.16),Vector3(0,.49,side*.62),.037,"#efd292")
 	cue_strap.hide()
 	ui.add_child(waybill);waybill.job=self
+	ui.add_child(cinema_bars);cinema_bars.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT);cinema_bars.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	for edge in [0.,1.]:
+		var bar:=ColorRect.new();cinema_bars.add_child(bar);bar.color=Color("#101919");bar.mouse_filter=Control.MOUSE_FILTER_IGNORE
+		bar.anchor_right=1.;bar.anchor_top=edge;bar.anchor_bottom=edge;bar.offset_top=-54. if edge>0. else 0.;bar.offset_bottom=0. if edge>0. else 54.
+	ui.move_child(cinema_bars,0)
 	setup_signal_props()
+	girl=art.courier(land.frame,true);preload("res://bell_household.gd").new().dress(girl)
+	girl.position=land.frame.to_local(land.apprentice.global_position)+Vector3(.02,0,.89);girl.rotation.y=1.28
+	land.stations.port.add_child(convoy);convoy.position=Vector3(0,-.68,28.)
 	foreman_face.bind(land.apprentice,.47);apprentice_face.bind(lift.hand,1.14)
 	daughter_face.bind(coast.daughter,.79);ferryman_face.bind(land.elder,2.3)
 	sailmaker_face.bind(land.helper,1.7);pilot_face.bind(land.captain,2.9)
@@ -188,6 +215,13 @@ func setup_signal_props()->void:
 		for sign_y in [-1.,1.]:art.cyl(dock,box_at+Vector3.UP*.17*sign_y,.177,.16,.07,"#806a52",12)
 		for dx in [-.105,.105]:art.beam(dock,box_at+Vector3(dx,-.16,.088),box_at+Vector3(dx,.16,.088),.011,"#785e4a")
 		var light:=OmniLight3D.new();dock.add_child(light);light.position=box_at;light.light_color=Color("#ffcc8b");light.omni_range=6.5;quay_lamps.append(light)
+	# A stationary seamark makes both turns readable across the cut.
+	reef_marker=art.group(coast.skiff.get_parent(),Vector3(8.8,-.84,30.))
+	for shape in [Vector4(-.85,.05,.38,1.0),Vector4(.25,.07,-.4,1.24),Vector4(.97,.03,.52,.74)]:
+		art.ball(reef_marker,Vector3(shape.x,shape.y,shape.z),Vector3(1.8,.94,1.07)*shape.w,"#595d59")
+	art.beam(reef_marker,Vector3.ZERO,Vector3.UP*2.42,.09,"#c69761")
+	art.box(reef_marker,Vector3.UP*1.77,Vector3(.81,.28,.12),"#fff0cb")
+	art.box(reef_marker,Vector3.UP*2.15,Vector3(.81,.28,.12),"#bb5842")
 	port_signal=signal_lamp(coast.skiff,Vector3(-1.64,1.34,.12))
 	cup_signal=art.ring(land.cup,Vector3.UP*.14,.20,.024,"#ffe3a1");cup_signal.hide()
 	for id in ["hollow_yoke","hemp_winch","copper_landing","clay_answer","letter_fold"]:
@@ -239,7 +273,7 @@ func save()->void:
 	if step=="first_drop":step="yard"
 	if step=="camp_talk":step="drive"
 	if step=="crane":step="dock"
-	checkpoint.emit({"step":step,"first_worked":first_worked,"catch_seen":first_catch_seen,"slip":slip,"driven":driven_sections,"events":encounters.snapshot(),"repair":rigging_repaired,"pos":pos,"yaw":yaw,"porter":porter,"carry":carried,"turned":depot_turned,"passed":gate_passed,"song":learned,"blessing":blessing,"packed":packed,"visits":visited,"hp":hp,"time":elapsed})
+	checkpoint.emit({"step":step,"first_worked":first_worked,"fog_reach":fog_reach,"catch_seen":first_catch_seen,"slip":slip,"driven":driven_sections,"events":encounters.snapshot(),"repair":rigging_repaired,"pos":pos,"yaw":yaw,"porter":porter,"carry":carried,"turned":depot_turned,"passed":gate_passed,"song":learned,"blessing":blessing,"packed":packed,"visits":visited,"hp":hp,"time":elapsed})
 	checkpoint_at=pos
 
 func restore()->void:
@@ -247,7 +281,10 @@ func restore()->void:
 	if record.has("driven") and record.driven is PackedByteArray and record.driven.size()==driven_sections.size():driven_sections=record.driven.duplicate()
 	first_catch_seen=record.get("catch_seen",false);slip=clampf(record.get("slip",0.),-.83,.83)
 	encounters.restore(record.get("events",{}));rigging_repaired=record.get("repair",false)
-	stage=record.get("step","opening");pos=record.get("pos",pos);yaw=record.get("yaw",yaw);porter=record.get("porter",porter);carried=record.get("carry",false);depot_turned=record.get("turned",false);gate_passed=record.get("passed",false)
+	stage=record.get("step","opening");
+	fog_reach=clampf(float(record.get("fog_reach",-999.)),-999.,END+205.)
+	if stage=="call":stage="opening"
+	pos=record.get("pos",pos);yaw=record.get("yaw",yaw);porter=record.get("porter",porter);carried=record.get("carry",false);depot_turned=record.get("turned",false);gate_passed=record.get("passed",false)
 	blessing=record.get("blessing",false);learned=record.get("song",false);packed=record.get("packed",false);visited=record.get("visits",0);hp=record.get("hp",100.);elapsed=record.get("time",0.)
 	first_worked=record.get("first_worked",stage not in ["opening","call"]);mountain_cup.visible=blessing
 	if stage not in ["opening","call","yard","silence","drive","dock","ring","arrival","ledger","invite"]:stage="yard"
@@ -272,7 +309,10 @@ func mount_bell()->void:
 func near(point:Vector2,r:float)->bool:return pos.distance_squared_to(point)<r*r
 func action()->void:
 	match stage:
-		"opening":switch("call")
+		"opening":
+			if lookout_seen:
+				first_worked=true;switch("yard");tell("女孩：我帮你看着船。门有点窄，小心钟杠。",3.8)
+			else:switch("call")
 		"call":
 			first_worked=true;switch("first_drop");one_shot(0,.94,-3.)
 		"first_drop":
@@ -307,7 +347,7 @@ func action()->void:
 				lesson_assist=true;answer_time=0.;one_shot(1,.88);tell("老渡工：对，就这么敲。我儿子的船听见了，会给你回号。" ,3.)
 		"dock":request_dock()
 		"ring":
-			switch("arrival");one_shot(4 if learned else 0);tell("你敲了两下短的，又敲了一声长的。" if learned else "钟声传到雾里。领港船转过来了。",2.8)
+			switch("arrival");one_shot(4 if learned else 0);tell("女孩屏住了呼吸。" if learned else "船夫把缆绳搭在木桩上，望向海面。",1.9)
 		"ledger":settle(false)
 
 func request_dock()->void:
@@ -322,12 +362,21 @@ func settle(buy:bool)->void:
 	finished_view=true
 	completed.emit(learned,hp,buy and not fitted and not previously_paid);switch("invite");phrase_left=0.
 func _input(ev:InputEvent)->void:
-	if ev is InputEventMouseButton and ev.pressed and ev.button_index==MOUSE_BUTTON_LEFT and stage=="drive" and catch_left>0. and not pause_panel and not waybill.visible:
-		catch_left=0.;brace_left=Catch.DURATION;swing_v*=.35
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index==MOUSE_BUTTON_LEFT and stage=="drive" and rope_grip.available(slip/BELL_RAIL,speed,catch_left,brace_left) and not pause_panel and not waybill.visible:
+		rope_grip.take();catch_left=0.;brace_left=Catch.DURATION;swing_v*=.35
 		tag_text="扶住了";tag_time=1.05;audio.play_cue("grab")
 		get_viewport().set_input_as_handled();return
 
 func _unhandled_input(ev:InputEvent)->void:
+	if stage=="opening" and not pause_panel and ev is InputEventKey and ev.keycode!=KEY_ESCAPE:
+		if ev.pressed and ev.keycode in [KEY_E,KEY_SPACE]:
+			var fresh:bool=not ev.echo and elapsed-last_open_press>.55
+			last_open_press=elapsed
+			if fresh and ev.keycode==KEY_SPACE and age>=INVITATION_AT and not lookout_seen:
+				lookout_seen=true;lookout_age=0.;one_shot(0,.92,-4.);update_hud()
+			elif fresh and ev.keycode==KEY_E and lookout_seen and lookout_age>=ACCEPT_AT:
+				first_worked=true;worker.show();switch("yard");tell("师傅松了手，把钟杠留给你。",2.5)
+		get_viewport().set_input_as_handled();return
 	if ev is InputEventKey and ev.pressed and not ev.echo and boarding_age<0.:
 		if ev.keycode==KEY_TAB and not pause_panel and stage!="ledger":
 			lesson_hold=-1.
@@ -367,10 +416,10 @@ func _unhandled_input(ev:InputEvent)->void:
 		KEY_Q:
 			if not pause_panel and stage=="yard" and carried:
 				depot_turned=not depot_turned;audio.play_cue("foot");phrase_left=0.;save();update_hud()
-			elif not pause_panel and stage=="ledger":settle(true)
+			elif not pause_panel and stage=="ledger" and not previously_paid and not fitted:settle(true)
 		KEY_SPACE:
 			if not pause_panel and stage=="opening" and (lookout_age<0. or lookout_age>3.9):
-				lookout_seen=true;lookout_age=0.;one_shot(3,.92,-8.);update_hud()
+				lookout_seen=true;lookout_age=0.;one_shot(0,.92,-4.);update_hud()
 			elif not pause_panel and stage=="call":action()
 			elif not pause_panel and stage=="drive" and echo_age>2.6:call_echo()
 			elif not pause_panel and stage=="listen" and age>=3.3 and answer_time<0.:lesson_hold=age
@@ -378,31 +427,49 @@ func _unhandled_input(ev:InputEvent)->void:
 	get_viewport().set_input_as_handled()
 
 func call_echo()->void:
-	echo_age=0.;echo_return=false
+	echo_age=0.;echo_return=false;reply_at=.65
 	var nearest:=INF;var index:=-1
 	for i in land.beacon_points.size():
+		if land.beacon_points[i].x<pos.x+3.:continue
 		var d:=pos.distance_to(land.beacon_points[i])
 		if d<nearest:nearest=d;index=i
-	echo_goal=land.beacons[index].global_position;echo_pitch=.86 if nearest<180. else .71
+	echo_goal=land.beacons[index].global_position if index>=0 else land.harbor_frame.global_position;echo_pitch=.86 if nearest<180. else .71
 	one_shot(0,1.,-5.);encounters.on_echo()
 	if pos.x>1224.:
-		fog_reach=minf(1604.,pos.x+205.)
-		tell("铜钟一响，雾里的人沿路点起了引航灯。",2.8)
-	if nearest>190.:
+		echo_goal=land.harbor_frame.global_position+Vector3.UP*2.
+		if pos.x<fog_reach-205.:fog_reach=pos.x
+		fog_origin=pos.x;fog_path=pos
+		for i in coast.fog_x.size():
+			if coast.fog_x[i]>pos.x+6.:
+				echo_goal=coast.foglights[i].global_position
+				reply_at=.22+(coast.fog_x[i]-pos.x)/108.
+				break
+	if nearest>190. and pos.x<=1224.:
 		echo_goal=land.surface(land.road(clampf(pos.x+46.,0.,END),old_road))+Vector3.UP*3.;echo_pitch=.74
 	if near(land.road(land.WATCH,true,8.6),90.) and not learned:
 		echo_goal=land.cup.global_position;echo_pitch=1.24
 func echo_tick(dt:float)->void:
 	echo_age+=dt
+	if stage=="drive" and pos.x>1224.:
+		mist_wait+=dt
+		if fog_origin>0.:
+			fog_reach=maxf(fog_reach,minf(fog_origin+205.,fog_origin+maxf(0.,echo_age-.22)*108.))
 	if echo_age<2.45:
-		if echo_age>.65 and not echo_return:
+		if echo_age>reply_at and not echo_return:
 			echo_return=true;reply.global_position=echo_goal;reply.stream=tracks[1 if echo_pitch>1. else 0];reply.pitch_scale=echo_pitch;reply.play()
 		for i in rings.size():
 			var u:float=echo_age-.17*i
 			rings[i].visible=u>0 and u<1.6
 			if rings[i].visible:
-				var at:=truck.global_position+Vector3.UP*1.15 if u<.64 else echo_goal
-				rings[i].global_position=at;rings[i].scale=Vector3.ONE*(.55+fmod(u,.66)*9.)
+				var at:=truck.global_position+Vector3.UP*1.15 if u<reply_at else echo_goal
+				if stage=="drive" and pos.x>1224. and fog_origin>0. and u<reply_at:
+					var travel:=smoothstep(.0,reply_at,u)
+					var following:=land.road(lerpf(fog_origin,echo_goal.x,travel),false,5.6)
+					var surface:=land.surface(fog_path.lerp(following,travel))
+					at=surface+Vector3.UP*lerpf(1.7,2.08,travel)
+					rings[i].scale=Vector3.ONE*(.48+sin(PI*travel)*.54)
+				else:rings[i].scale=Vector3.ONE*(.55+fmod(u,.66)*(2.3 if stage=="drive" and fog_origin>0. else 9.))
+				rings[i].global_position=at
 	else:
 		for r in rings:r.hide()
 func yard_tick(dt:float,input:Vector2)->void:
@@ -447,52 +514,55 @@ func close_to_ear()->bool:
 	return porter.distance_to(ear_foot())<1.66
 
 func drive_tick(dt:float,throttle:float,steer:float)->void:
-	var forward:=Vector2.from_angle(yaw);var previous:=speed
+	var forward:=Vector2.from_angle(yaw)
 	var track:=land.road_dist(pos)
 	var slope:float=land.ground(pos+forward*.5)-land.ground(pos-forward*.5)
 	var top:=7.55 if track<6. else 5.25
-	var target:float=throttle*top if throttle>=0. else throttle*(3. if speed<.2 else 7.)
-	speed=move_toward(speed,target,(8.8 if throttle<0 and speed>0. else (3.6 if throttle!=0 else 1.55))*dt)
-	if absf(speed)>.2:speed=clampf(speed-slope*3.7*dt,-3.,top+1.4)
-	var rate:=steer*clampf(absf(speed)*.27,0.,1.3)*(1. if speed>=0. else -1.)
-	steer_rate=lerpf(steer_rate,rate,1.-exp(-dt*5.8));yaw+=steer_rate*dt
+	var loose:=smoothstep(3.5,8.,track)
+	speed=chassis.accelerate(dt,speed,throttle,top,3.,slope,loose)
+	steer_rate=chassis.steer(dt,steer,speed)*1.30;yaw+=steer_rate*dt
 	forward=Vector2.from_angle(yaw)
 	wind=smoothstep(land.FORK,land.FORK+190.,pos.x)*(1.-smoothstep(land.JOIN-230.,land.JOIN,pos.x))*(.28+.72*pow(maxf(0.,sin(elapsed*.72)),2.))
 	old_road=absf(pos.y-land.branch(pos.x))+.5<absf(pos.y-land.center(pos.x))
 	var band:=clampi(roundi(pos.x/END*100.),0,100)
 	driven_sections[band]|=2 if old_road else 1
 	if old_road:wind*=.16
-	var desired:=forward*speed+Vector2(0,wind*1.2)*minf(absf(speed)*.25,1.)
-	velocity=velocity.lerp(desired,1.-exp(-dt*(4.4 if track<6. else 2.5)))
+	velocity=chassis.roll(dt,forward,speed,loose,false)+Vector2(0,wind*1.2)*minf(absf(speed)*.25,1.)
+	var before:=pos
 	var next:=pos+velocity*dt
 	if land.valid(next):pos=next
 	else:
 		if absf(speed)>3. and hit_lock<=0.:
 			hp=maxf(0.,hp-(2.+absf(speed)*.66)*(.68 if packed or fitted else 1.));hit_lock=1.6;shake=.32;audio.play_cue("bonk");tell("撞上路边障碍　·　钟身遭到冲击",2.)
-		speed=move_toward(speed,0.,dt*40.);velocity*=.25
+		speed=move_toward(speed,0.,dt*40.);velocity*=.25;chassis.velocity=velocity
 	swing_v+=(-swing*6.6-swing_v*2.5-steer_rate*speed*.31+wind*1.9)*dt
 	swing=clampf(swing+swing_v*dt,-.75,.75)
 	var bank:float=land.crossfall(pos.x)*cos(yaw)
 	var downhill_slide:float=-bank*1.25*smoothstep(2.8,6.8,absf(speed))
 	track_bell(dt,(swing*.55+wind*.22)*minf(absf(speed)/4.,1.)+downhill_slide)
+	if rope_grip.tick(slip/BELL_RAIL,speed,catch_left,brace_left,pos.distance_to(before)):audio.play_cue("buckle")
 	for w in wheels:w.rotation.z-=speed*dt/.52
 	truck.position=land.surface(pos);truck.rotation.y=-yaw
-	truck.rotation.z=lerp_angle(truck.rotation.z,atan(slope)+clampf((speed-previous)*.16,-.035,.035),1.-exp(-dt*5.))
-	truck.rotation.x=lerpf(truck.rotation.x,swing*.11-bank,1.-exp(-dt*4.))
+	truck.rotation.z=lerp_angle(truck.rotation.z,atan(slope)+chassis.pitch,1.-exp(-dt*5.))
+	truck.rotation.x=lerpf(truck.rotation.x,swing*.11-bank+.033*steer_rate*chassis.slip,1.-exp(-dt*4.))
 	freight.position=Vector3(-1.42,1.27,slip*.78);freight.rotation.x=swing*.36
+	wheel_traces.update(dt,pos.distance_to(before),2 if loose>.5 else (1 if chassis.slip>.68 else 0))
 	encounters.tick(dt)
 	if pos.distance_to(checkpoint_at)>85.:save()
 	var region:=land.region(pos.x)
 	if region!=last_region:
 		last_region=region
-		var lines:=["白帆港在山下。沿车辙走，过了山口就能看见海。","路边的石耳能传声。按空格，敲一下车上的钟。","白石桩那边风大、路近。红布旗那边绕远些，有人家。","两条路在这里会合了。翻过前面那座山就是海。","前面起雾了。按空格敲钟，让沿路的人替你点灯。"]
+		if region==1:one_shot(1,1.12,-12.)
+		var lines:=["白帆港在山下。沿车辙走，过了山口就能看见海。","刚才的钟声停了，山那边怎么还响了一下？","两边的车辙都通向白帆港。","两条路在这里会合了。翻过前面那座山就是海。","起雾了。远处的石耳，朝着山脚的钟。"]
 		tell(lines[region],4.,0)
 	if pos.x>59. and pos.x<84. and not (visited&8):
 		visited|=8;tell("前面是斜坡。松油门更稳，绑带绷紧时点左键扶住钟。",6.,1)
 	if pos.x>land.FORK-95. and pos.x<land.FORK and not (visited&1):
-		visited|=1;tell("前面两条路都到港。走左边翻山快，走右边能找帆匠垫钟。" ,6.)
+		visited|=1;tell("师傅：赶时间就沿白石桩翻山。要垫钟，认帆匠的红布。" ,6.)
 	if near(land.road(land.WATCH,true,8.6),55.) and not (visited&2):
-		visited|=2;one_shot(1,1.,-8.);tell("叮、叮……当。背后的杯声，竟比山谷多了一下。",5.);save()
+		visited|=2;cup_call.play();cup_age=0.;save()
+	elif not learned and near(land.road(land.WATCH,true,8.6),38.) and cup_age>9.:
+		cup_call.play();cup_age=0.
 	if near(land.road(END),13.) and absf(speed)<1.2:
 		speed=0.;velocity=Vector2.ZERO;switch("dock")
 func track_bell(dt:float,drift:float)->void:
@@ -508,7 +578,7 @@ func track_bell(dt:float,drift:float)->void:
 	var pushing_rail:=remaining<=.007 and absf(drift)>.095
 	if catch_side==0 and absf(speed)>.5 and (peril or pushing_rail):
 		catch_side=side;catch_left=Catch.WINDOW if first_catch_seen else 1.05
-		first_catch_seen=true;audio.play_cue("buckle")
+		first_catch_seen=true
 	if brace_left>0.:
 		slip=move_toward(slip,0.,Catch.grip_step(minf(dt,brace_left)));brace_left=maxf(0.,brace_left-dt)
 	else:
@@ -532,8 +602,9 @@ func _physics_process(dt:float)->void:
 	match stage:
 		"opening":
 			if lookout_age>=0.:lookout_age+=dt
-			if age>1. and song_beat<0:one_shot(3,.86,-13.);song_beat=0
-			if age>3.6 and song_beat==0:song_beat=1
+			if age>4.05 and song_beat<0:one_shot(0,.96,-4.);song_beat=0
+			if age>6.4 and song_beat==0:
+				yard_sound(2,lift.loads[0].global_position,-3.);song_beat=1
 		"call":pass
 		"first_drop":
 			if age>.73 and song_beat<0:one_shot(0,1.23,-11.);yard_sound(1,lift.drum.global_position,-4.);song_beat=0
@@ -582,16 +653,21 @@ func _physics_process(dt:float)->void:
 				else:mount_bell();switch("ring");tell("钟挂好了。码头的人都停下来，等你敲第一声。",4.)
 		"arrival":
 			var beat:=0 if age<2.8 else (1 if age<5.5 else 2)
-			if beat!=song_beat:
+			if beat>song_beat:
 				song_beat=beat
 				if beat==1:
-					one_shot(2 if learned else 3,1.,-4.);tell("雾里也传来两短一长。有人在回号！" if learned else "领港人：听到了，往钟声那边靠！",3.)
+					one_shot(2 if learned else 3,1.,-4.)
+					if not learned:tell("领港人：听到了！把缆绳抛过来。",2.8)
 				elif beat==2:
 					tell("渡工女儿：是爸爸！我在这儿！" if learned else "领港员听见了。第一条渡船正在靠岸。",5.5)
-			if age>11.5:switch("ledger")
+			if age>10.1 and song_beat==2:
+				song_beat=3;tell("领港人：后面的粮船也听见了。把缆绳递给我！",4.)
+			if age>15.0:switch("ledger")
 	if stage in ["opening","call","first_drop","yard","silence","mountain"] or (stage=="drive" and pos.x<50.):
-		lift.fire_tick(dt);lift.animate(stage,age,first_worked,blessing)
-	coast.animate(elapsed,pos,fog_reach,blessing and stage!="inlay");echo_tick(dt);pose(dt);guide.tick(dt);tick_ui-=dt
+		lift.fire_tick(dt)
+		if stage=="opening":lift.animate("first_drop",maxf(0.,age-3.5),false,blessing)
+		else:lift.animate(stage,age,first_worked,blessing)
+	echo_tick(dt);coast.animate(elapsed,pos,fog_reach,blessing and stage!="inlay",echo_age,fog_origin);pose(dt);guide.tick(dt);tick_ui-=dt
 	if tick_ui<=0.:tick_ui=.12;update_hud()
 
 func signal_pulse(t:float,second:float,third:float)->float:
@@ -602,11 +678,19 @@ func signal_pulse(t:float,second:float,third:float)->float:
 	return 1.-smoothstep(.22,.77,t-third)
 
 func cast_tick(dt:float)->void:
-	if stage!="listen":cup_signal.hide()
-	port_signal.visible=learned and stage in ["arrival","ledger","invite"]
+	cup_age+=dt
+	if stage!="listen":
+		var roadside:=signal_pulse(cup_age,.38,1.04) if stage=="drive" and cup_age<2.25 else 0.
+		cup_signal.visible=roadside>.06
+		if cup_signal.visible:cup_signal.scale=Vector3.ONE*(1.05+.84*(1.-roadside))
+		if stage=="drive" and cup_age<2.25:
+			land.elder.get_node("ArmR").rotation.x=-.74-roadside*.80
+			land.elder.get_node("ArmR").rotation.z=-.35-.23*roadside
+	port_signal.visible=(stage=="opening" and lookout_age>=2.5) or (learned and stage in ["arrival","ledger","invite"])
 	if port_signal.visible:
 		var pulse:=signal_pulse(age-2.8,.55,1.24) if stage=="arrival" else 0.
-		port_signal.scale=Vector3(.30,.36,.27)*(.36+1.65*pulse)
+		if stage=="opening":pulse=1.-smoothstep(.16,.5,absf(lookout_age-3.25))
+		port_signal.scale=Vector3(.30,.36,.27)*(.45+3.8*pulse)
 	var now:=elapsed
 	var smith:=land.apprentice
 	if stage in ["opening","call","first_drop","silence","yard","mountain"]:
@@ -641,6 +725,13 @@ func cast_tick(dt:float)->void:
 		pilot_face.perform(dt,now,Vector2(.26,-.07),.58 if stage=="invite" else -.47,age<4.3 and stage in ["opening","invite"])
 
 func pose(dt:float)->void:
+	if stage=="opening" and age<3.5:
+		lift.receiver.get_node("ArmL").rotation.x=-.84-.31*sin(age*4.3)
+		lift.receiver.get_node("ArmR").rotation.x=-.77+.27*sin(age*4.3)
+		lift.hand.get_node("ArmR").rotation.z=.28*sin(age*4.3)
+		lift.drum.rotation.z=age*1.6
+		lift.loads[0].rotation.y=.11*sin(age*2.0)
+
 	var at:Vector3;var offset:Vector3;var immediate:=not cam_started
 	pilot_lamp.visible=stage=="opening" or stage=="invite"
 	if stage not in ["opening","arrival","ledger","invite"]:coast.skiff.hide()
@@ -650,6 +741,9 @@ func pose(dt:float)->void:
 	if stage=="mountain":twilight=.28
 	evening(twilight)
 	var haze:=smoothstep(1112.,1368.,pos.x)*(1.-.45*smoothstep(END-80.,END,pos.x))
+	if stage=="drive" and pos.x>1224. and pos.x>fog_reach-235.:
+		var road_corridor:=1.-smoothstep(7.,20.,land.road_dist(pos))
+		haze*=1.-.54*smoothstep(3.,65.,fog_reach-pos.x)*road_corridor
 	if stage in ["arrival","ledger","invite"]:haze*=1.-smoothstep(2.,9.,age) if stage=="arrival" else .12
 	atmosphere.fog_density=lerpf(.0023,.026,haze);atmosphere.fog_light_color=Color("#a9c3c8").lerp(Color("#afc3d0"),haze);atmosphere.fog_light_color=atmosphere.fog_light_color.lerp(Color("#b2a4b1"),twilight*.49);atmosphere.fog_sun_scatter=.08
 	if stage in ["arrival","ledger","invite"]:
@@ -660,7 +754,11 @@ func pose(dt:float)->void:
 		coast.daughter.position=Vector3(-4.,0,10.4).lerp(Vector3(-2.,0,15.1),landing)
 		coast.daughter.get_node("ArmL").rotation.z=sin(elapsed*6.)*.35-1.9 if learned and landing>.01 else 0.
 		coast.daughter.get_node("ArmR").rotation.z=1.8-sin(elapsed*5.)*.23 if learned and landing>.01 else 0.
-	mallet.visible=stage in ["call","first_drop"]
+	mallet.visible=stage in ["opening","call","first_drop"]
+	if stage=="opening":
+		var holder:Node3D=worker if lookout_seen else land.apprentice
+		if mallet.get_parent()!=holder.get_node("ArmR"):mallet.reparent(holder.get_node("ArmR"),false)
+	elif mallet.get_parent()!=worker.get_node("ArmR"):mallet.reparent(worker.get_node("ArmR"),false)
 	letter_prop.visible=stage=="invite" and learned
 	if mallet.visible:
 		worker.position=land.frame.global_position+Vector3(-1.04,.01,.60);worker.rotation.y=2.16
@@ -672,18 +770,46 @@ func pose(dt:float)->void:
 	elif stage=="camp_talk":
 		at=land.stations.camp.global_position+Vector3(.4,1.15,.2);offset=Vector3(-2.6,1.25,4.6)
 	elif stage=="opening":
-		land.ferry.position=Vector3(8.6+sin(age*.27)*.32,-.69,24.-sin(age*.22)*.38);land.ferry.rotation.z=sin(age*1.5)*.035
-		coast.daughter.get_node("ArmL").rotation.z=-1.94+.22*sin(age*6.)
+		var smith:=land.apprentice
+		var entry:=smoothstep(18.3,21.8,age)
+		worker.visible=age>=18.3
+		worker.position=land.frame.global_position+Vector3(-2.9,.02,3.5).lerp(Vector3(-1.04,.02,.6),entry)
+		worker.rotation.y=2.16
+		worker.get_node("LegL").rotation.x=.47*sin(entry*TAU*3.)
+		worker.get_node("LegR").rotation.x=-.47*sin(entry*TAU*3.)
+		var wrist:=smith.get_node("ArmR") as Node3D
+		girl.visible=age>6.6
+		girl.position=land.frame.to_local(smith.global_position)+Vector3(.02,0,lerpf(2.5,.89,smoothstep(6.6,8.,age)))
+		if lookout_age>9.0:girl.position.x-=1.35*smoothstep(9.0,11.8,lookout_age)
+		var partner:Vector3=worker.global_position if age>20.4 else wrist.global_position
+		girl.look_at(Vector3(partner.x,girl.global_position.y,partner.z),Vector3.UP,true)
+		if age>20.4:worker.look_at(Vector3(girl.global_position.x,worker.global_position.y,girl.global_position.z),Vector3.UP,true)
+		girl.get_node("ArmR").rotation.x=-1.31*smoothstep(7.1,8.,age)
 		coast.skiff.show()
-		var loss:=smoothstep(.30,4.7,lookout_age) if lookout_age>=0. else .10*sin(age*.37)
-		coast.skiff.position=Vector3(15.6+8.5*loss,-.76+.10*sin(age*1.55),34.2+12.2*loss)
-		coast.skiff.rotation=Vector3(.021*cos(age),-.38,.033*sin(age*1.47))
-		var view:=smoothstep(0.,.86,lookout_age)*(1.-smoothstep(3.1,4.6,lookout_age)) if lookout_age>=0. else 0.
-		land.captain.rotation.y=lerp_angle(-2.70,.68,view);land.captain.get_node("ArmR").rotation.x=-.46-view*1.53
-		var pilot:=land.captain.global_position+Vector3.UP*1.14
-		at=pilot.lerp(coast.skiff.global_position+Vector3.UP*1.25,view*.79+.095)
-		offset=Vector3(-4.25,1.90,-4.65).lerp(Vector3(-3.25,1.25,-7.25),view)
-		atmosphere.fog_density=.031+view*.016
+		var first_turn:=smoothstep(7.9,10.8,age)
+		var second_turn:=smoothstep(.72,4.65,lookout_age)
+		coast.skiff.position=Vector3(16.6,-.7+.085*sin(elapsed*1.7),35.)+Vector3(-2.1,0,-1.3)*first_turn+Vector3(-2.7,0,-2.)*second_turn
+		coast.skiff.rotation.y=.23-.62*first_turn-.82*second_turn
+		var shot:=0 if age<3.6 else (1 if age<4.55 else (7 if age<7.25 else (2 if age<13.0 else (3 if age<18.3 else 4))))
+		if lookout_seen:shot=5 if lookout_age<.62 else (2 if lookout_age<7.5 else (3 if lookout_age<12.1 else 6))
+		match shot:
+			0,7:
+				at=lift.loads[0].global_position.lerp(lift.hand.global_position+Vector3.UP*1.12,.48)
+				offset=Vector3(2.6,1.2,5.0)
+			1,5:
+				at=freight.global_position+Vector3.UP*.77;offset=Vector3(-1.5,.64,2.05)
+			2:
+				at=reef_marker.global_position.lerp(coast.skiff.global_position,.60)+Vector3.UP*1.15
+				offset=Vector3(3.3,2.25,-10.8);atmosphere.fog_density=.017
+			3:
+				at=girl.global_position.lerp(smith.global_position,.47)+Vector3.UP*1.19;offset=Vector3(-2.5,.55,-.85)
+			_:
+				at=girl.global_position.lerp(worker.global_position,.24)+Vector3.UP*1.28;offset=Vector3(-.37,.42,2.72)
+				if shot==6:
+					at=smith.global_position.lerp(worker.global_position,.30)+Vector3.UP*1.27;offset=Vector3(.28,.64,3.13)
+		if shot!=cut_index:cam_started=false;cut_index=shot
+		cam.fov=36. if shot in [1,3,5] else 45.
+
 	elif stage in ["call","first_drop","silence","mountain"]:
 		var near_bell:=land.frame.global_position+Vector3(-1.45,1.36,-.03)
 		var near_winch:=lift.loads[1 if stage in ["silence","mountain"] else 0].global_position
@@ -721,23 +847,35 @@ func pose(dt:float)->void:
 		at=land.surface(Vector2(END,3))+Vector3.UP*1.8;offset=Vector3(-8.2,7.4,8.5)
 	else:
 		var ahead:=Vector3(cos(yaw),0,sin(yaw));at=truck.global_position+Vector3.UP*1.65+ahead*1.9;offset=-ahead*11.7+Vector3.UP*(5.2+.035*absf(speed));at+=Vector3.UP*.52
+	if stage!="opening":cam.fov=54.
+	if stage!="opening":girl.visible=stage in ["opening","call","first_drop","yard","silence"]
+	var returning:=stage in ["arrival","ledger","invite"]
+	convoy.show_return(age-5.2 if stage=="arrival" else (11. if returning else -1.))
+	if stage=="first_drop" and age>.55 and age<1.85:
+		coast.skiff.show();coast.skiff.rotation.y=-.12-.94*smoothstep(.55,1.7,age);at=coast.skiff.global_position+Vector3.UP*1.1;offset=Vector3(-3.4,1.63,-6.5)
+	if stage=="arrival" and age>9.8:
+		at=convoy.global_position+Vector3(1.,1.2,-1.8);offset=Vector3(-6.8,4.8,-10.)
 	var smoothing:=1. if immediate else 1.-exp(-dt*(6. if stage=="drive" else 3.5))
 	if not cam_started or cam.global_position.distance_to(at)>100.:smoothing=1.
 	cam.global_position=cam.global_position.lerp(at+offset,smoothing);focus_smooth=focus_smooth.lerp(at,smoothing)
 	cam.look_at(focus_smooth+Vector3.UP*(sin(elapsed*43.)*shake*.12));cam_started=true
 	cast_tick(dt)
+	if stage=="opening":
+		land.apprentice.get_node("ArmR").rotation.x=-.65-.64*smoothstep(3.2,4.0,age)+.8*smoothstep(4.,4.18,age)-.52*smoothstep(7.,7.6,age)
 	var awaken:=0.
-	if stage=="first_drop" or stage=="arrival":awaken=1.-smoothstep(1.3,3.2,age)
+	if stage=="opening" and lookout_seen:worker.get_node("ArmR").rotation.x=-1.22+.81*exp(-pow(lookout_age*4.,2.))
+	if stage=="opening":awaken=1.-smoothstep(.0,1.45,absf(lookout_age if lookout_seen else age-4.05))
+	elif stage=="first_drop" or stage=="arrival":awaken=1.-smoothstep(1.3,3.2,age)
 	elif stage=="drive" and echo_age<2.5:awaken=sin(PI*clampf(echo_age/2.5,0.,1.))
 	elif stage in ["inlay","mountain"]:awaken=.82
 	freight.answer(awaken,dt)
 	if freight.tongue:freight.tongue.rotation.x=swing*.55+sin(echo_age*12.)*exp(-echo_age*2.2)*.35
-	var warning:=catch_left>0.
+	var warning:=rope_grip.available(slip/BELL_RAIL,speed,catch_left,brace_left)
 	cue_strap.visible=stage=="drive" and (warning or brace_left>0.)
 	if cue_strap.visible:cue_strap.scale=Vector3.ONE*(1.+.065*sin(PI*catch_left/Catch.WINDOW))
 	if stage=="drive" and not pause_panel and (warning or brace_left>0. or tag_time>0. or hit_lock>0. or absf(slip)>.37):
 		bell_tag.set_balance(true,slip/BELL_RAIL)
-		var detail:="左键  扶住" if warning else (tag_text if tag_time>0. else ("货物受冲击" if hit_lock>0. else ""))
+		var detail:=rope_grip.hint(slip/BELL_RAIL,speed,catch_left,brace_left) if warning or brace_left>0. else (tag_text if tag_time>0. else ("货物受冲击" if hit_lock>0. else ""))
 		bell_tag.follow(cam,freight.global_position+Vector3.UP*1.48,"回声钟",hp,detail,warning or hit_lock>0.)
 	else:bell_tag.hide()
 func next_task()->String:
@@ -766,13 +904,23 @@ func update_hud()->void:
 	ledger.text=phrase if phrase_left>0. else ""
 	match stage:
 		"opening":
-			title.text="第一声港钟";caption.text="白帆港　·　清晨海雾"
-			controls.text="空格  举灯示意      E  上山借钟" if not lookout_seen else "E  上山借钟"
-			ledger.text="领港人：看，红帆又绕回来了。我再举一次灯，试试船上能不能看见。"
-			if lookout_seen:ledger.text="领港人：船上看不见我们。听说山上有口钟，声音能穿过大雾。劳驾你跑一趟。"
+			controls.text="";ledger.text=""
+			if age<3.6:ledger.text="山脚工人：绳紧了！师傅，听你的钟。"
+			elif age>=7.25 and age<10.8:ledger.text="女孩：那条红帆！爸，你开过头了！"
+			elif age>=13. and age<18.3:ledger.text="师傅：这么大的雾，他哪儿看得见你挥手。"
+			elif age>=19.2 and age<23.5:ledger.text="女孩：可你刚一敲，他就转了。"
+			elif age>=23.5:ledger.text="女孩：借你一下钟槌。你敲，我看他应不应。"
+			if age>=INVITATION_AT:controls.text="空格　试着敲一声"
+			if lookout_seen:
+				controls.text="";ledger.text=""
+				if lookout_age>=4.8 and lookout_age<7.5:ledger.text="女孩：他举灯了！爸听见了！"
+				elif lookout_age>=7.5 and lookout_age<12.1:ledger.text="女孩：可他再往咱们这头开，就要上礁了。"
+				elif lookout_age>=12.1:ledger.text="师傅：把钟架到白帆港去。他循着声儿，就能进港。"
+				if lookout_age>=ACCEPT_AT:controls.text="E　我来运钟"
 
-		"call":title.text="铸钟山　/　早班";caption.text="对坡的学徒等着放篮";ledger.text="师傅：敲一下。回声神会替你传到对坡，学徒听见了才敢放篮。";controls.text="E  请师傅代敲"
-		"first_drop":title.text="铸钟山　/　早班";controls.text="";ledger.text="学徒：听到了！我这就放篮。" 
+		"call":title.text="铸钟山";caption.text="女孩盯着红帆";ledger.text="女孩：你敲，我看着。";controls.text="E  拿起钟杠"
+
+		"first_drop":title.text="铸钟山　/　早班";controls.text="";ledger.text="女孩：船头转过来了。把钟带到港口试试。" 
 		"silence":title.text="铸钟山　/　第二篮";caption.text="铜钟已经上车";controls.text="E  发车去白帆港" if age>=1.35 else "";ledger.text="师傅：钟搬走了，敲木架可传不到对坡。那篮铜，只能先吊着了。"
 		"invite":
 			title.text="白帆港　/　入夜";caption.text="蓝棚木阶的夜渡正要启航"
@@ -785,7 +933,7 @@ func update_hud()->void:
 		"drive":
 			caption.text="%s　　距白帆港 %.1f 公里　　%d km/h"%[("旧渡路" if old_road else "海岸公路"),km,roundi(absf(speed)*3.6)]
 			controls.text="W 加速　S 刹车　A D 转向　空格 敲钟问路" if pos.x<48. else ""
-			if controls.text=="" and ((pos.x>land.FORK-80. and pos.x<land.FORK+105.) or (km<.80 and fog_reach<pos.x+15.)):controls.text="空格  敲钟问路"
+			if controls.text=="" and ((pos.x>land.FORK-80. and pos.x<land.FORK+105.) or (mist_wait>4.5 and pos.x>1224. and fog_reach<pos.x+15.)):controls.text="空格  敲钟问路"
 			if km<.04:controls.text="S  减速，停到钟架旁"
 		"camp_talk":
 			title.text="旧渡路　/　帆匠的红棚";caption.text="帆匠把一层厚布垫在钟下"
@@ -800,7 +948,8 @@ func update_hud()->void:
 			if age>3.3 and answer_time<0.:
 				controls.text="空格  敲杯　　R  再听一遍　　E  请爷爷带着敲"
 				ledger.text=["老渡工：来，先轻按一下。我孙女也在码头等她爸爸呢。","老渡工：再轻按一下。","老渡工：最后一下按久点，再松手。"][clampi(lesson_hits,0,2)] if phrase_left<=0. else phrase
-			elif answer_time>=0.:controls.text="铜钟记住了家船的信号。"
+			elif answer_time>=0.:
+				controls.text="";ledger.text="老渡工：对，就是这声。到港口还这么叫，他认得。"
 		"dock":controls.text="E　请港口铜匠铆住裂口（修缮费 4 枚）" if hp<30. else ""
 		"crane":controls.text="A / D  移动吊车　　"+str(rig.hint if is_instance_valid(rig) else "")
 		"ring":controls.text="敲出爷爷教你的船号" if learned else ""
@@ -809,12 +958,21 @@ func update_hud()->void:
 			title.text="白帆港　/　第一笔入账";caption.text="港钟已挂好，下一班夜渡会听见它。"
 			ledger.text="旧渡工的家船与领港船都已回港" if learned else "领港船已靠岸　·　旧渡路上，还有一种钟声"
 			if blessing:ledger.text+="　·　铸钟山重获回声"
-			controls.text="E 返回委托簿" if previously_paid else "运费 %d 枚　·　E 存进商号　　Q 花 12 枚缝永久钟毡，再回委托簿"%fare(hp,learned,rigging_repaired)
+			controls.text="E　去木阶看看" if previously_paid else ("运费 %d 枚　·　E 收下运费，去木阶"%fare(hp,learned,rigging_repaired) + ("" if fitted else "　　Q 留 12 枚缝永久钟毡，再去木阶"))
 	if pause_panel:
 		title.text="已暂停　/　行程已记下";caption.text="进度已保存";controls.text="E / Esc  继续　　B  回委托簿";ledger.text="路上用 W 加速、S 刹车，A D 转向。空格敲钟，货物快撞栏时点左键。"
 	manifest.visible=not waybill.visible
 	var show_text:=(stage!="ledger" or pause_panel) and not waybill.visible
 	for text_node in [title,caption,controls,ledger]:text_node.visible=show_text
+	var cinematic:=stage in ["opening","first_drop","silence","mountain","arrival","invite","inlay"] and not pause_panel and not waybill.visible
+	cinema_bars.visible=cinematic
+	controls.position.y=610. if cinematic else 637.
+	ledger.position.y=550. if cinematic else 571.
+	if cinematic:
+		title.hide();caption.hide();manifest.hide();guide.hide();bell_tag.hide()
+		ledger.add_theme_constant_override("outline_size",5)
+	else:
+		guide.visible=not waybill.visible
 	manifest.refresh()
 static func fare(integrity:float,song:bool,repaired:=false)->int:return 14+(12 if integrity>=90 else (7 if integrity>=60 else 2))+(6 if song else 0)-(4 if repaired else 0)
 

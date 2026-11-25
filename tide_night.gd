@@ -362,6 +362,8 @@ func pose(dt:float,turn:float)->void:
 
 func ui_update()->void:
 	task.text="送达 %d / 4 位 · 满三位可回渡税亭收班"%delivered()
+	if delivered()==0 and seats.is_empty() and not bread_loaded:task.text="岸边有人等船。靠近码头，看看谁要过河。"
+	guide.text="W S 划船 / 倒船　 A D 掌舵　 Tab 航图　 Esc 返回" if port>=0 else "W S 划船 / 倒船　 A D 掌舵　 空格 鸣螺探浅　 Tab 航图　 Esc 返回"
 	var manifest:=PackedStringArray()
 	for guest in seats:manifest.append(GUESTS[guest]+" → "+NAMES[STOPS[guest]])
 	deck.text="船上　"+("空座 × 2" if seats.is_empty() else "　/　".join(manifest))+("　·　面包篮 → 双灯窑" if bread_loaded else "")
@@ -384,3 +386,8 @@ func ui_update()->void:
 	action.visible=stage=="sail" and not action.text.is_empty()
 	action.reset_size();action.position.x=(1280-action.size.x)/2
 	guide.visible=stage=="sail";task.visible=stage=="sail";deck.visible=stage=="sail";chart.visible=stage=="sail"
+
+func _exit_tree()->void:
+	if is_instance_valid(melody):
+		melody.stop()
+		melody.stream=null

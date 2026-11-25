@@ -377,7 +377,7 @@ func reset_depot()->void:
 	design.lock_front.position.y=0;design.lock_back.position.y=-6.3
 	design.tide_water.position.y=-0.70
 	sound.set_scene("yard")
-	message("把铁配重推上金色压盘，抬起隔栏",2.6)
+	if not blue_focus:message("守塔人还等着这块镜芯。先让镜车过栏。",3.8)
 
 func attach_item(item:Node3D,p:Node3D,pos:Vector3)->void:
 	if item.get_parent()!=p: item.reparent(p,false)
@@ -412,7 +412,9 @@ func try_walk(dir:Vector2i)->void:
 	if step_left>0 or dir==Vector2i.ZERO: return
 	var dest:=player_cell+dir
 	courier.rotation.y=atan2(float(dir.x),float(dir.y))
-	if not can_enter(dest): return
+	if not can_enter(dest):
+		if dest==GATE:message("隔栏挡住了路。旁边的金盘空着。",1.8)
+		return
 	var lens_here:=not lens_loaded and dest==lens_cell
 	var weight_here:=not spare_loaded and dest==weight_cell
 	var next:=dest+dir
@@ -432,7 +434,7 @@ func try_walk(dir:Vector2i)->void:
 		else: sound.play_cue("foot")
 	elif weight_here:
 		weight_cell=next
-		if next==PLATE: sound.play_cue("snap");message("隔栏升起 · 去镜车背后，把它推过通道",2.0)
+		if next==PLATE: sound.play_cue("snap");message("隔栏让开了 · 去镜车背后，把它推过通道",2.0)
 		elif next==SPARE and lens_loaded:
 			spare_loaded=true;sound.play_cue("load");message("已加压舱铁 · 渡船更抗侧流，航速稍慢",2.4)
 		else: sound.play_cue("foot")
@@ -548,6 +550,10 @@ func start_hill()->void:
 	hill.begin(truck,jewel,spare_loaded)
 	change_stage("hill");sound.play_cue("start")
 	message("货车上岸 · 木衡桥抄近路，蓝门村道可取邮戳",3.0)
+	update_camera(1.)
+	preload("res://arrival_film.gd").play(self,"hill",cam,[
+		[hill.span,.6,Vector3(-7.,4.8,9.),"守桥人：桥板两头是活的。上了桥，别猛踩油门。"],
+		[truck,1.15,Vector3(4.,2.1,5.6),"赶路走木桥。想让镜芯稳一点，就绕蓝门村。","接手山路"]])
 
 func sail_damage(loss:float,reason:String)->void:
 	if impact_wait>0: return
@@ -638,6 +644,11 @@ func enter_dive()->void:
 	change_stage("dive");speed=0
 	depot.hide();coast.hide();sun.hide();title.get_parent().hide()
 	sound.bg.stream_paused=true
+	dive.set_meta("arrival_history",get_meta("arrival_history",{}))
+	preload("res://arrival_film.gd").play(dive,"deep",dive.camera,[
+		[dive.pearl,.0,Vector3(0,.8,4.),"潮印还亮着，沉在水门另一头。"],
+		[dive.cog,.05,Vector3(0,.75,4.3),"绞盘少了一只轮子。水流把它冲到了这里。"],
+		[dive.pilot,.15,Vector3(0,.9,5.2),"钟罩里留着空气。记住回来的路。","松开潜水钟的扶手"]])
 
 func leave_dive(recovered:bool,fee:int)->void:
 	if stage!="dive":return
@@ -701,6 +712,10 @@ func enter_chamber()->void:
 	courier.show()
 	change_stage("chamber");sound.set_scene("yard")
 	update_beams()
+	update_camera(1.)
+	preload("res://arrival_film.gd").play(self,"optics",cam,[
+		[jewel,.2,Vector3(-2.,1.4,3.8),"守塔人：镜芯好好的。瞧，光已经出来了。"],
+		[mirrors[0],1.1,Vector3(3.3,2.4,5.),"可灯顶还是黑的。第一面镜子把光送哪儿去了？","走到镜座旁"]])
 
 func beam_segment(node:MeshInstance3D,a:Vector3,b:Vector3)->void:
 	var delta:=b-a
@@ -830,6 +845,9 @@ func update_camera(dt:float)->void:
 		if has_bakery or player_cell.y>=4 or blue_step==3:
 			look=Vector3(7.65,.42,8.24).lerp(courier.position,.14)
 			offset=Vector3(.34,19.45,14.42)
+		if weight_cell==PLATE and gate_open<.97 and not blue_focus:
+			var focus_weight:=sin(PI*clampf(gate_open,0.,1.))*.30
+			look=look.lerp(cell_world(GATE)+Vector3.UP,focus_weight)
 		if community!=null:
 			var morning:bool=blue_focus or community.carried or community.salute_left>0.
 			var want:=1. if morning and not lens_loaded else 0.
@@ -880,12 +898,12 @@ func update_ui()->void:
 	var guide:="WASD 推货走位　 Z 撤回一步　 E 解缆　 Esc 返回公路"
 	if stage=="depot":
 		if not lens_loaded:
-			objective="铁配重 → 金色压盘" if weight_cell!=PLATE else "隔栏已升 · 把镜车推到青色吊运盘"
+			objective="镜车出不了栏。把铁配重推上金盘，给镜车让条路。" if weight_cell!=PLATE else "通道已开 · 把镜车推到青色吊运盘"
 		else:
 			objective="镜芯已装船 · 加装压舱铁，或前往系缆柱出发"
 			if player_cell.distance_to(HELM)<1.45: prompt="E 解缆启航"
 		if player_cell.y==6 and player_cell.x in [1,3]:prompt="E 听街坊说　 Q 随船去双灯窑取灯" if blue_step<2 else ("E 查看共建铭　 Q 随夜船出港" if blue_step==3 else "Q 续运陶灯")
-		elif blue_step==0:objective+="　·　朝海面走到木台边找船夫"
+		
 		if blue_focus and blue_step<3:
 			where="第一盏晚灯";objective="沿左侧通道向画面下方走，在临水木台找伊娅和船夫"
 			guide="WASD 走到摊前　 E 交谈　 Q 随船运灯　 Esc 离开"
@@ -916,7 +934,7 @@ func update_ui()->void:
 		if stage=="sea" and sail_pos.distance_to(LOCK)<7.1: prompt="E 系缆入闸" if absf(speed)<2 else "减速入闸"
 	elif stage in ["lock","sluice"]:
 		where="升船闸 · 调平水位"
-		objective="进水抬船，让金针停在青带后开闸"
+		objective="上层水渠比船高。开阀抬船，等金针稳在青带再开闸。"
 		guide="按住 W 进水　 S 排水　 松手闭阀　 E 解锁上闸　 Esc 返回"
 		prompt="水位 %.2f 米　目标 3.55 米"%level
 		if absf(level-3.55)<=0.24 and absf(flow)<=0.42: prompt="水位已平 · E 开启上闸"
@@ -929,7 +947,7 @@ func update_ui()->void:
 		elif hill.pos.distance_to(hill.xz(hill.POST))<5.4 and not hill.mark:prompt="E 请邮差盖戳　+11"
 	elif stage in ["chamber","lighting","signed"]:
 		where="北岬灯室 · 引光签收"
-		objective="光从镜芯出发，经 Ⅰ、Ⅱ 镜座照亮主灯"
+		objective="看光束断在哪儿。转动那面镜子，把光送到下一座。"
 		guide="WASD 走到镜座旁　 E / Q 顺转或逆转　 Esc 返回"
 		if keeper.distance_to(MIRRORS[0])<2.25 or keeper.distance_to(MIRRORS[1])<2.25: prompt="E 顺转　Q 逆转"
 		if light_on: prompt="灯塔已点亮"
@@ -944,7 +962,7 @@ func update_ui()->void:
 	if at_cargo:
 		var panic:bool=stage=="hill" and hill.catch_left>0
 		nearby.set_balance(stage=="hill" and hill.Catch.show_balance(hill.lateral/.84,hill.catch_left,hill.brace_left),hill.lateral/.84)
-		var status:String=hill.Catch.instruction(hill.catch_left,hill.brace_left) if stage=="hill" else ""
+		var status:String=hill.rope_grip.hint(hill.lateral/.84,hill.speed,hill.catch_left,hill.brace_left) if stage=="hill" else ""
 		nearby.follow(cam,jewel.global_position+Vector3.UP*1.00,"镜芯",condition,status,panic)
 		if stage in ["sea","upper"]:cargo_label.text="%s　%.1f 米/秒"%["张帆" if sail_up else "收桅",absf(speed)]
 		if stage=="hill":cargo_label.text="%d 千米/时"%roundi(absf(hill.speed)*3.6)

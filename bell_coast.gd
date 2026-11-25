@@ -8,6 +8,15 @@ var chime_wheels:Array[Node3D]=[]
 var wind_flags:Array[Node3D]=[]
 var foglights:Array[Node3D]=[]
 var fog_x:Array[float]=[]
+var verge_lights:Array[OmniLight3D]=[]
+const FOG_HERM:=1366.
+var herm_inlay:=StandardMaterial3D.new()
+var herm_voice:=AudioStreamPlayer3D.new()
+var herm_wave:=-999.
+var grass_wave:=ShaderMaterial.new()
+var fork_cloths:Array[MeshInstance3D]=[]
+var echo_pennants:Array[Node3D]=[]
+var pennant_stations:Array[float]=[]
 var foundry_lantern:Node3D
 var daughter:Node3D
 var skiff:Node3D
@@ -23,7 +32,7 @@ const HORN:=1112.
 
 func build(v)->void:
 	valley=v;rng.seed=606297
-	horizon();terraces();stoneway();villages();foundry();harbor();wind_posts();memorial();verge_life();loading_alley()
+	horizon();terraces();stoneway();villages();foundry();harbor();wind_posts();listening_bend();memorial();verge_life();shore_grass();loading_alley()
 func anchor(x:float,z:float,old:=false)->Node3D:return valley.site(valley.road(x,old,z))
 func batch(n:Node3D,far:=310.)->void:
 	craft.batch(n)
@@ -172,17 +181,84 @@ func harbor()->void:
 	skiff.hide()
 
 func wind_posts()->void:
+	# Two material trails continue down opposite sides of the fork.
+	for station:float in [511.,531.,552.,579.,612.]:
+		var high:=anchor(station,-5.65)
+		a.cyl(high,Vector3.UP*.46,.37,.30,.94,"#b4a998",8)
+		a.cyl(high,Vector3.UP*1.02,.34,.30,.20,"#f2e7c5",8)
+		a.cyl(high,Vector3.UP*1.27,.29,.21,.32,"#b9ac91",8)
+		if station==511.:continue
+		var low:=anchor(station,5.9,true)
+		var mast:=a.group(low);mast.rotation.y=-.35
+		a.beam(mast,Vector3.ZERO,Vector3.UP*3.3,.067,"#8b6d4d")
+		var cloth:=fork_panel(mast)
+		fork_cloths.append(cloth)
 	for info:Vector2 in [Vector2(140,5.9),Vector2(296,-6.8),Vector2(495,7.4),Vector2(524,6.5),Vector2(579,7.),Vector2(652,-6.),Vector2(708,-6.),Vector2(808,-7.),Vector2(880,-6.6),Vector2(980,6.7),Vector2(1120,7.),Vector2(1276,-7.)]:
 		var p:=anchor(info.x,info.y,info.y>0.)
 		a.beam(p,Vector3.ZERO,Vector3.UP*3.54,.073,"#826945")
 		var arm:=a.group(p,Vector3.UP*3.28);wind_flags.append(arm)
 		for j in 3:
 			var strip:=a.box(arm,Vector3(.47+j*.44,-.10-j*.075,0),Vector3(.52,.48-.105*j,.045),"#b76040" if info.y>0 else "#587b83");strip.rotation.z=-.09*j
-	for x in range(1272,1568,37):
-		var p:=anchor(x,6.2 if x%2==0 else -6.2)
+	# A soft scattering halo keeps distant lanterns distinguishable from roadside stone.
+	var haze_texture:=GradientTexture2D.new()
+	haze_texture.width=96;haze_texture.height=96
+	haze_texture.fill=GradientTexture2D.FILL_RADIAL
+	haze_texture.fill_from=Vector2(.5,.5);haze_texture.fill_to=Vector2(1.,.5)
+	var stop:=Gradient.new()
+	stop.offsets=PackedFloat32Array([0.,.12,.32,.64,1.])
+	stop.colors=PackedColorArray([Color(1.,.92,.66,.88),Color(1.,.76,.39,.60),Color(1.,.66,.28,.26),Color(.98,.59,.21,.07),Color(.94,.51,.18,0.)])
+	haze_texture.gradient=stop
+	for x in range(1232,1580,19):
+		var p:=anchor(x,5.6)
 		a.cyl(p,Vector3.UP*.72,.35,.25,1.45,"#a59172");a.cyl(p,Vector3.UP*1.55,.23,.42,.35,"#766649")
-		var lamp:=a.ball(p,Vector3.UP*1.94,Vector3(.48,.77,.48),"#ffe8a3",true)
+		a.cyl(p,Vector3.UP*1.81,.29,.37,.12,"#bb8a55",10)
+		for side in [-1.,1.]:
+			a.beam(p,Vector3(side*.32,1.82,0),Vector3(side*.24,2.36,0),.037,"#8e704e")
+		a.cyl(p,Vector3.UP*2.39,.08,.38,.20,"#92744d",10)
+		var lamp:=a.ball(p,Vector3.UP*2.08,Vector3(.68,1.0,.68),"#ffe8a3",true)
 		var emit:=StandardMaterial3D.new();emit.albedo_color=Color("#efbd77");emit.emission_enabled=true;emit.emission=Color("#ffc883");emit.emission_energy_multiplier=2.2;lamp.material_override=emit;lamp.hide();foglights.append(lamp);fog_x.append(float(x))
+		var halo:=Sprite3D.new()
+		lamp.add_child(halo);halo.texture=haze_texture;halo.pixel_size=.105
+		halo.billboard=BaseMaterial3D.BILLBOARD_ENABLED;halo.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var pool:=OmniLight3D.new()
+		p.add_child(pool);pool.position=Vector3(-.3,1.95,-.35)
+		pool.light_color=Color("#ffbd74");pool.light_energy=3.35;pool.omni_range=8.4;pool.hide()
+		verge_lights.append(pool)
+		if fog_x.size()%3==1:
+			var tangent:Vector2=valley.road(x+8.)-valley.road(x)
+			var mast:=a.group(p,Vector3.UP*2.58);mast.rotation.y=-tangent.angle()
+			a.beam(mast,Vector3.DOWN*.26,Vector3.UP*.20,.038,"#856b49")
+			var ribbon:=a.group(mast,Vector3.UP*.12)
+			for strip in 4:
+				var cloth:=a.box(ribbon,Vector3(.23+strip*.43,-.045*strip*strip,0),Vector3(.48,.27-strip*.03,.04),"#eed8a1" if strip!=2 else "#bf7650")
+				cloth.rotation.z=-.13*strip
+			echo_pennants.append(ribbon);pennant_stations.append(x)
+func listening_bend()->void:
+	var site:=anchor(FOG_HERM,-12.)
+	herm_inlay.albedo_color=Color("#9b895e");herm_inlay.metallic=.49;herm_inlay.roughness=.58
+	herm_inlay.emission_enabled=true;herm_inlay.emission=Color("#ffc270");herm_inlay.emission_energy_multiplier=0.
+	var statue:=preload("res://listening_herm.gd").new().build(site,Vector3.ZERO,-.98,2.5,herm_inlay)
+	site.add_child(herm_voice);herm_voice.position=statue.position+Vector3.UP*7.6
+	herm_voice.stream=preload("res://audio/clay_answer.wav");herm_voice.pitch_scale=.73;herm_voice.unit_size=22.;herm_voice.max_distance=112.;herm_voice.volume_db=-4.5
+	for i in 4:
+		var base:=a.box(site,Vector3(1.8+i*.29,.06-i*.055,.56),Vector3(1.02,.26,2.9-i*.18),"#ad997b")
+		base.rotation.y=-.17
+	valley.block(valley.road(FOG_HERM,false,-12.),2.3)
+
+func fork_panel(mast:Node3D)->MeshInstance3D:
+	var cloth:=MeshInstance3D.new()
+	var surface:=SurfaceTool.new();surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in 6:
+		for corner:Vector2 in [Vector2(0,0),Vector2(1,1),Vector2(1,0),Vector2(0,0),Vector2(0,1),Vector2(1,1)]:
+			var u:float=(j+corner.x)/6.
+			surface.set_color(Color("#e8d4a6") if j==1 else Color("#ac4a38"))
+			surface.add_vertex(Vector3(2.1*u,-.61*corner.y*(1.-.69*u)-.14*u,sin(u*TAU)*.17))
+	surface.generate_normals();cloth.mesh=surface.commit()
+	var dye:=StandardMaterial3D.new()
+	dye.vertex_color_use_as_albedo=true;dye.vertex_color_is_srgb=true;dye.cull_mode=BaseMaterial3D.CULL_DISABLED
+	cloth.material_override=dye;mast.add_child(cloth);cloth.position.y=3.24
+	return cloth
+
 func memorial()->void:
 	var altar:=anchor(HORN,6.6);craft.outcrop(altar,Vector3(1.24,.14,-1.73),Vector3(3.8,1.73,2.4),88)
 	a.cyl(altar,Vector3(0,-.25,-.4),1.63,1.75,.55,"#a2977c",14)
@@ -201,13 +277,34 @@ func memorial()->void:
 		a.cyl(altar,Vector3(px-sin(tube.rotation.z)*h*.5,h-.01,-.66),.16,.16,.02,"#6a5347")
 	clay_light=a.ring(altar,Vector3(0,2.1,-.5),.53,.028,"#ffdfa4");clay_light.hide()
 
-func animate(t:float,p:Vector2,foghorn:float,blessed:bool)->void:
+func animate(t:float,p:Vector2,foghorn:float,blessed:bool,echo_age:=10.,echo_start:=-999.)->void:
+	var wave_front:=echo_start+maxf(0.,echo_age-.22)*108. if echo_start>0. and echo_age<2.35 else -999.
+	grass_wave.set_shader_parameter("wave_front",wave_front)
+	var traveled:=wave_front-FOG_HERM
+	var resonance:float=smoothstep(-2.,3.,traveled)*(1.-smoothstep(14.,89.,traveled)) if echo_start<=FOG_HERM else 0.
+	herm_inlay.emission_energy_multiplier=resonance*(2.9 if blessed else 1.85)
+	if herm_wave<FOG_HERM and wave_front>=FOG_HERM and echo_start<FOG_HERM:
+		herm_voice.play()
+	herm_wave=wave_front
+	grass_wave.set_shader_parameter("wave_strength",1.-smoothstep(1.95,2.35,echo_age))
 	for n in chime_wheels:n.rotation.x=t*.54
+	for i in fork_cloths.size():
+		fork_cloths[i].rotation.y=.34*sin(t*2.4-i*.93)
+		fork_cloths[i].rotation.x=.15*sin(t*3.1-i)
 	for i in wind_flags.size():wind_flags[i].rotation.y=.34*sin(t*2.2+i)+.23*sin(t*3.7+i*.3)
 	for i in fog_x.size():
 		var lit:bool=fog_x[i]<foghorn and fog_x[i]>foghorn-235.
 		foglights[i].visible=lit
-		if lit:foglights[i].scale.y=.75+.12*sin(t*7.+i)
+		verge_lights[i].visible=lit and absf(p.x-fog_x[i])<40.
+		if lit:
+			var behind:float=wave_front-fog_x[i]
+			var crest:float=(1.-smoothstep(0.,24.,behind)) if behind>=0. and echo_start<=fog_x[i] else 0.
+			foglights[i].scale=Vector3(.52,.65,.52)*(1.+.52*crest+.06*sin(t*4.+i))
+	for i in echo_pennants.size():
+		var past:float=wave_front-pennant_stations[i]
+		var ringing:=smoothstep(-8.,8.,past)*(1.-smoothstep(30.,95.,past))
+		var ribbon:=echo_pennants[i]
+		ribbon.rotation.z=lerpf(-.95,-.04,ringing)+sin(t*5.+i)*(.035+.13*ringing)
 	clay_light.visible=blessed;clay_light.rotation.y=t;mended_rim.visible=blessed
 
 
@@ -252,6 +349,64 @@ func verge_life()->void:
 			var n:=MultiMeshInstance3D.new();n.multimesh=arr;valley.add_child(n)
 			if not key.begins_with("tree"):n.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		source.free()
+
+func shore_grass()->void:
+	# One small clump is instanced in windrows on the sea road and on the exposed ridge.
+	var tufts:=SurfaceTool.new();tufts.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for stem in 13:
+		var az:=stem*2.39996
+		var base:=Vector3(cos(az)*.45,0.,sin(az)*.60)
+		var spread:=Vector3(cos(az)*.54,0.,sin(az)*.61)
+		var width:=Vector3(-sin(az),0.,cos(az))*.050
+		var height:=.62+.42*absf(sin(az*2.3))
+		for row in 5:
+			for corner:Vector2 in [Vector2(0,0),Vector2(1,1),Vector2(1,0),Vector2(0,0),Vector2(0,1),Vector2(1,1)]:
+				var u:float=(row+corner.y)/5.
+				var center:=base+Vector3.UP*(height*u)+spread*u*u
+				var edge:float=(corner.x*2.-1.)*(.24+.76*sin(u*PI)) if u<.99 else 0.
+				tufts.set_uv(Vector2(0.,u));tufts.set_normal(Vector3.UP)
+				tufts.set_color(Color("#455d49").lerp(Color("#a7a67e"),u).srgb_to_linear())
+				tufts.add_vertex(center+width*edge)
+		if stem%3:continue
+		var plume:=base+Vector3.UP*height+spread
+		for corner:Vector2 in [Vector2(-1,0),Vector2(0,1),Vector2(1,0),Vector2(-1,0),Vector2(1,0),Vector2(0,-.8)]:
+			tufts.set_uv(Vector2(1,1));tufts.set_color(Color("#c4b991").srgb_to_linear());tufts.set_normal(Vector3.UP)
+			tufts.add_vertex(plume+width*corner.x+Vector3(.085,.134,.025)*corner.y)
+	var transforms:Array[Transform3D]=[]
+	var grass_rng:=RandomNumberGenerator.new();grass_rng.seed=53117
+	for span:Vector2i in [Vector2i(515,649),Vector2i(1230,1548)]:
+		for x in range(span.x,span.y,2):
+			for side:float in [-1.,1.]:
+				var density:=.52+.32*sin(x*.09+side)+.10*cos(x*.19)
+				if grass_rng.randf()>density:continue
+				for cluster in grass_rng.randi_range(2,5):
+					var sx:float=x+grass_rng.randf_range(-1.3,1.3)
+					var width:=grass_rng.randf_range(4.8,11.8)
+					if sx<650. and side>0.:continue
+					var foot:Vector2=valley.road(sx,false,width*side)
+					var angle:float=(valley.road(sx+1.)-valley.road(sx)).angle()
+					var scale:=grass_rng.randf_range(.70,1.35)
+					var basis:=Basis(Vector3.UP,-angle+grass_rng.randf_range(-.3,.3)).scaled(Vector3.ONE*scale)
+					transforms.append(Transform3D(basis,valley.surface(foot)-Vector3.UP*.04))
+	var mesh:=tufts.commit()
+	grass_wave.shader=preload("res://bell_shore_grass.gdshader")
+	var tiles:Dictionary[int,Array]={}
+	for transform in transforms:
+		var index:=floori(transform.origin.x/64.)
+		if not tiles.has(index):tiles[index]=[]
+		tiles[index].append(transform)
+	for index in tiles:
+		var group:Array=tiles[index]
+		var center:Vector3=group[group.size()/2].origin
+		var foliage:=MultiMesh.new();foliage.transform_format=MultiMesh.TRANSFORM_3D;foliage.mesh=mesh
+		foliage.instance_count=group.size()
+		for i in group.size():
+			var transform:Transform3D=group[i];transform.origin-=center
+			foliage.set_instance_transform(i,transform)
+		var patch:=MultiMeshInstance3D.new();patch.multimesh=foliage;patch.material_override=grass_wave
+		patch.position=center;patch.visibility_range_end=190.;patch.visibility_range_end_margin=20.
+		patch.cast_shadow=GeometryInstance3D.SHADOW_CASTING_SETTING_OFF;valley.add_child(patch)
+
 
 func loading_alley()->void:
 	var yard:Node3D=valley.stations.yard;var root:=a.group(yard)

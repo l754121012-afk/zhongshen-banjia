@@ -43,7 +43,8 @@ func update_view()->void:
 		elif n.works==2:heading="把陶灯送回蓝棚木阶";counter="船上  ·  陶灯"
 		elif n.works==1:heading="去双灯窑取陶灯"
 		elif n.works==0 and n.seats.is_empty() and not n.bread_loaded and not n.fruit_reserved:heading="去双灯窑见窑工"
-		elif n.works==3 and not n.worker_signed:heading="去双灯窑接晚班窑工"
+		elif n.works==3 and not n.worker_signed:
+			heading="蓝棚木阶已亮灯" if not n.hailed_worker and n.port!=3 else "双灯窑有人等船"
 		if n.lamp_offer and n.works==0:
 			speaker="窑工";line="昨晚我在木阶上踩空了。这盏灯刚烧好，能帮我带过去吗？"
 			tip="E  带上陶灯       划走可暂时离开"
@@ -52,6 +53,8 @@ func update_view()->void:
 			if split_at>0 and split_at<=5:
 				speaker=n.note.left(split_at);line=n.note.substr(split_at+1).trim_prefix("「").trim_suffix("」")
 			else:line=n.note
+		elif n.first_passenger_waiting() and n.pos.distance_to(n.BERTH)<7. and not n.hailed_worker:
+			tip="空格  鸣螺问问对岸"
 		elif n.action.visible:tip=n.action.text
 		if tip=="" and line=="" and n.works==2 and n.pos.distance_to(n.BERTH)>6. and not n.used_echo:tip="空格  吹海螺，看看港钟怎样回应"
 		if tip=="" and line=="" and n.time<7. and story:tip="W  划船     A D  掌舵     S  减速"
@@ -61,6 +64,8 @@ func update_view()->void:
 			counter="已送 %d 班　·　钱袋 %d 枚"%[n.paid_crossings,n.available_funds]
 			if line=="" and not n.mirror_built:tip="Q  看共建铭，给外弯装一面照礁镜"
 		if n.mirror_age>=0.:heading="外弯的礁石亮了";counter="照礁镜已启用"
+	if n.fare_scene and n.fare_scene.active():
+		cinematic=true;heading="窑工到家了" if n.fare_scene.landing else "末班船上的第一位客人";speaker="窑工";line=n.fare_scene.subtitle();tip="";counter="船资到账　＋8 枚" if n.fare_scene.landing else ""
 	for control in [n.title,n.task,n.deck,n.guide,n.action]:control.hide()
 	queue_redraw()
 
@@ -68,22 +73,23 @@ func label(at:Vector2,caption:String,type:Font,px:int,tint:Color)->void:
 	draw_string(type,at,caption,HORIZONTAL_ALIGNMENT_LEFT,-1,px,tint)
 
 func _draw()->void:
-	var left:=Vector2(30,30)
-	var w:=maxf(258.,head.get_string_size(heading,HORIZONTAL_ALIGNMENT_LEFT,-1,23).x+82.)
-	draw_rect(Rect2(left,Vector2(w,76)),INK)
-	draw_rect(Rect2(left,Vector2(4,76)),BRASS)
-	var emblem:=left+Vector2(36,39)
-	draw_arc(emblem,17,0,TAU,40,BRASS,1.2,true)
-	for i in 3:
-		var a:=Vector2(-10+i*7.,4)
-		draw_line(emblem+a,emblem+a+Vector2(0,-6-i*2),SEA,2,true)
-	draw_polyline(PackedVector2Array([emblem+Vector2(-11,6),emblem+Vector2(-4,9),emblem+Vector2(4,9),emblem+Vector2(11,6)]),BRASS,1.7,true)
-	label(left+Vector2(66,25),"白帆港    /    夜渡",body,15,SEA)
-	label(left+Vector2(65,58),heading,head,23,CREAM)
-	if not counter.is_empty():
-		var span:=body.get_string_size(counter,HORIZONTAL_ALIGNMENT_LEFT,-1,16).x+26.
-		draw_rect(Rect2(left+Vector2(0,80),Vector2(span,31)),INK)
-		label(left+Vector2(13,102),counter,body,16,CREAM)
+	if not job.watching_kiln():
+		var left:=Vector2(30,30)
+		var w:=maxf(258.,head.get_string_size(heading,HORIZONTAL_ALIGNMENT_LEFT,-1,23).x+82.)
+		draw_rect(Rect2(left,Vector2(w,76)),INK)
+		draw_rect(Rect2(left,Vector2(4,76)),BRASS)
+		var emblem:=left+Vector2(36,39)
+		draw_arc(emblem,17,0,TAU,40,BRASS,1.2,true)
+		for i in 3:
+			var a:=Vector2(-10+i*7.,4)
+			draw_line(emblem+a,emblem+a+Vector2(0,-6-i*2),SEA,2,true)
+		draw_polyline(PackedVector2Array([emblem+Vector2(-11,6),emblem+Vector2(-4,9),emblem+Vector2(4,9),emblem+Vector2(11,6)]),BRASS,1.7,true)
+		label(left+Vector2(66,25),"白帆港    /    夜渡",body,15,SEA)
+		label(left+Vector2(65,58),heading,head,23,CREAM)
+		if not counter.is_empty():
+			var span:=body.get_string_size(counter,HORIZONTAL_ALIGNMENT_LEFT,-1,16).x+26.
+			draw_rect(Rect2(left+Vector2(0,80),Vector2(span,31)),INK)
+			label(left+Vector2(13,102),counter,body,16,CREAM)
 	var bottom:=size.y-48.
 	if not tip.is_empty():
 		var tw:=body.get_string_size(tip,HORIZONTAL_ALIGNMENT_LEFT,-1,19).x+38.
@@ -99,7 +105,7 @@ func _draw()->void:
 		draw_rect(Rect2(p,Vector2(3,48)),BRASS)
 		if speaker!="":label(p+Vector2(18,31),speaker,head,18,BRASS)
 		label(p+Vector2(20+sx,32),line,body,21,CREAM)
-	if not cinematic:
+	if not cinematic and not job.watching_kiln():
 		var hint:="Tab  航图"
 		var x:=size.x-133.
 		draw_rect(Rect2(x,size.y-48.,106,29),INK)
